@@ -1,0 +1,6 @@
+{
+  "name": "TCDD & UIC 71 Kutu Menfez Tasarımı ve SAP2000 Modelleyici",
+  "description": "TCDD şartnamesi ve UIC 71 demiryolu standartlarına uygun tek gözlü kutu menfez tasarımı, SAP2000 kabuk sonlu eleman modeli parametreleri, donatı tahkiki ve malzeme metrajı arayüzü.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
