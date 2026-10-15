@@ -2,7 +2,7 @@
  * Main Application Component: TCDD & UIC 71 Box Culvert Design and SAP2000 Model Generator
  */
 
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   CulvertGeometry,
   RailwayLoadingParams,
@@ -25,9 +25,9 @@ import { CalculationReportModal } from './components/CalculationReportModal';
 
 export default function App() {
   // Proje Meta Bilgileri
-  const [projectName, setProjectName] = useState('TCDD Ankara - Sivas YHT Hattı Menfez Projesi');
-  const [stationOrKm, setStationOrKm] = useState('KM: 148+320');
-  const [designer, setDesigner] = useState('İnş. Yük. Müh. Fatih Altıok');
+  const [projectName, setProjectName] = useState('TCDD Demiryolu Kutu Menfez Tasarım Projesi');
+  const [stationOrKm, setStationOrKm] = useState('KM: 000+000');
+  const [designer, setDesigner] = useState('');
 
   // Menfez Geometrisi
   const [geometry, setGeometry] = useState<CulvertGeometry>({
@@ -49,7 +49,6 @@ export default function App() {
     ballastThickness: 0.5,
     trainSpeed: 160,
     alphaFactor: 1.0,
-    trackStandard: 'UIC71',
     dispersionSlope: 1.0, // 1:1 açılma
     sleeperLength: 2.6,
     longitudinalAxleSpacing: 1.6,
@@ -89,22 +88,32 @@ export default function App() {
   // Hesap raporu modalı
   const [isReportOpen, setIsReportOpen] = useState(false);
 
+  // Mobil/tablet giriş paneli çekmecesi
+  const [isInputPanelOpen, setIsInputPanelOpen] = useState(false);
+
   // Canlı Mühendislik Hesap Motorları
   const calculatedLoads = useMemo(() => {
     return calculateUIC71Loads(geometry, railway, soil);
   }, [geometry, railway, soil]);
 
   const sap2000Model = useMemo(() => {
-    return generateSAP2000Model(geometry, railway, soil, calculatedLoads, meshSize);
-  }, [geometry, railway, soil, calculatedLoads, meshSize]);
+    return generateSAP2000Model(geometry, soil, calculatedLoads, meshSize);
+  }, [geometry, soil, calculatedLoads, meshSize]);
 
   const structuralResults = useMemo(() => {
     return solveCulvertStructuralDesign(geometry, soil, calculatedLoads);
   }, [geometry, soil, calculatedLoads]);
 
+  // Metraj donatı çap/aralıklarını yapısal çözücüden alır (tek doğruluk kaynağı)
   const quantityReport = useMemo(() => {
-    return calculateQuantitySurvey(geometry, railway, unitCosts, soil.concreteGrade);
-  }, [geometry, railway, unitCosts, soil.concreteGrade]);
+    return calculateQuantitySurvey(
+      geometry,
+      railway,
+      unitCosts,
+      soil.concreteGrade,
+      structuralResults.sections
+    );
+  }, [geometry, railway, unitCosts, soil.concreteGrade, structuralResults.sections]);
 
   // SAP2000 .s2k Dosyasını İndirme
   const handleDownloadS2K = () => {
@@ -121,19 +130,30 @@ export default function App() {
 
   // Malzeme Metrajı CSV İndirme
   const handleExportCSV = () => {
-    const rows = [
-      ['Poz No', 'Imalat Tanimi', 'Birim', 'Miktar', `Birim Fiyat (${quantityReport.currency})`, `Toplam Tutar (${quantityReport.currency})`],
+    const esc = (v: string | number) => {
+      const s = String(v);
+      return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows: (string | number)[][] = [
+      [
+        'Poz No',
+        'Imalat Tanimi',
+        'Birim',
+        'Miktar',
+        `Birim Fiyat (${quantityReport.currency})`,
+        `Toplam Tutar (${quantityReport.currency})`,
+      ],
       ...quantityReport.items.map((it) => [
         it.posNo,
-        `"${it.description}"`,
+        it.description,
         it.unit,
-        it.quantity,
-        it.unitPrice,
-        it.totalCost,
+        it.quantity.toFixed(2).replace('.', ','),
+        it.unitPrice.toFixed(2).replace('.', ','),
+        it.totalCost.toFixed(2).replace('.', ','),
       ]),
-      ['', '', '', '', 'TOPLAM TUTAR', quantityReport.totalEstimatedCost],
+      ['', '', '', '', 'TOPLAM TUTAR', quantityReport.totalEstimatedCost.toFixed(2).replace('.', ',')],
     ];
-    const csvContent = rows.map((e) => e.join(';')).join('\n');
+    const csvContent = rows.map((e) => e.map(esc).join(';')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -231,34 +251,69 @@ export default function App() {
         onExportCSV={handleExportCSV}
         onSelectPreset={handleSelectPreset}
         onReset={handleReset}
+        onToggleInputPanel={() => setIsInputPanelOpen((prev) => !prev)}
       />
 
       {/* Main Split Layout: Left Input Panel, Right Interactive Canvas */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Input Sidebar */}
-        <InputPanel
-          projectName={projectName}
-          stationOrKm={stationOrKm}
-          designer={designer}
-          geometry={geometry}
-          railway={railway}
-          soil={soil}
-          unitCosts={unitCosts}
-          meshSize={meshSize}
-          onUpdateProject={(data) => {
-            if (data.projectName !== undefined) setProjectName(data.projectName);
-            if (data.stationOrKm !== undefined) setStationOrKm(data.stationOrKm);
-            if (data.designer !== undefined) setDesigner(data.designer);
-          }}
-          onUpdateGeometry={(geo) => setGeometry((prev) => ({ ...prev, ...geo }))}
-          onUpdateRailway={(rail) => setRailway((prev) => ({ ...prev, ...rail }))}
-          onUpdateSoil={(s) => setSoil((prev) => ({ ...prev, ...s }))}
-          onUpdateCosts={(c) => setUnitCosts((prev) => ({ ...prev, ...c }))}
-          onUpdateMeshSize={setMeshSize}
-        />
+        {/* Left Input Sidebar (masaüstü/tablet) */}
+        <div className="hidden md:flex w-80 md:w-88 lg:w-96 shrink-0">
+          <InputPanel
+            projectName={projectName}
+            stationOrKm={stationOrKm}
+            designer={designer}
+            geometry={geometry}
+            railway={railway}
+            soil={soil}
+            unitCosts={unitCosts}
+            meshSize={meshSize}
+            onUpdateProject={(data) => {
+              if (data.projectName !== undefined) setProjectName(data.projectName);
+              if (data.stationOrKm !== undefined) setStationOrKm(data.stationOrKm);
+              if (data.designer !== undefined) setDesigner(data.designer);
+            }}
+            onUpdateGeometry={(geo) => setGeometry((prev) => ({ ...prev, ...geo }))}
+            onUpdateRailway={(rail) => setRailway((prev) => ({ ...prev, ...rail }))}
+            onUpdateSoil={(s) => setSoil((prev) => ({ ...prev, ...s }))}
+            onUpdateCosts={(c) => setUnitCosts((prev) => ({ ...prev, ...c }))}
+            onUpdateMeshSize={setMeshSize}
+          />
+        </div>
+
+        {/* Mobil/tablet giriş paneli çekmecesi */}
+        {isInputPanelOpen && (
+          <div className="md:hidden fixed inset-0 z-50 flex">
+            <div
+              className="absolute inset-0 bg-black/60"
+              onClick={() => setIsInputPanelOpen(false)}
+            />
+            <div className="relative w-80 max-w-[88vw] h-full shadow-2xl">
+              <InputPanel
+                projectName={projectName}
+                stationOrKm={stationOrKm}
+                designer={designer}
+                geometry={geometry}
+                railway={railway}
+                soil={soil}
+                unitCosts={unitCosts}
+                meshSize={meshSize}
+                onUpdateProject={(data) => {
+                  if (data.projectName !== undefined) setProjectName(data.projectName);
+                  if (data.stationOrKm !== undefined) setStationOrKm(data.stationOrKm);
+                  if (data.designer !== undefined) setDesigner(data.designer);
+                }}
+                onUpdateGeometry={(geo) => setGeometry((prev) => ({ ...prev, ...geo }))}
+                onUpdateRailway={(rail) => setRailway((prev) => ({ ...prev, ...rail }))}
+                onUpdateSoil={(s) => setSoil((prev) => ({ ...prev, ...s }))}
+                onUpdateCosts={(c) => setUnitCosts((prev) => ({ ...prev, ...c }))}
+                onUpdateMeshSize={setMeshSize}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Right Active Viewport */}
-        <main className="flex-1 flex flex-col overflow-hidden relative">
+        <main className="flex-1 flex flex-col overflow-hidden relative min-w-0">
           {activeTab === '2d' && (
             <Section2DViewer
               geometry={geometry}
@@ -280,6 +335,7 @@ export default function App() {
             <Sap2000ExporterView
               modelData={sap2000Model}
               geometry={geometry}
+              loads={calculatedLoads}
               onDownloadS2K={handleDownloadS2K}
             />
           )}
@@ -302,6 +358,31 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Mobil/tablet alt sekme çubuğu (lg altındaki ekranlarda gezinme erişimi) */}
+      <nav className="lg:hidden flex shrink-0 border-t border-slate-800 bg-slate-900">
+        {(
+          [
+            ['2d', '2B Kesit'],
+            ['3d', '3B Mesh'],
+            ['sap2000', 'SAP2000'],
+            ['rebar', 'Donatı'],
+            ['boq', 'Metraj'],
+          ] as [typeof activeTab, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex-1 py-2.5 text-[11px] font-semibold transition-colors ${
+              activeTab === key
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
       {/* Official Calculation Report Modal */}
       <CalculationReportModal

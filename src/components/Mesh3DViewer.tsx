@@ -5,8 +5,9 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SAP2000ModelData, CulvertGeometry, RailwayLoadingParams } from '../types/culvert';
-import { Eye, Layers, RotateCcw, Box, Grid3X3, ArrowDown } from 'lucide-react';
+import { RotateCcw, Grid3X3, ArrowDown, AlertTriangle } from 'lucide-react';
 
 interface Mesh3DViewerProps {
   modelData: SAP2000ModelData;
@@ -21,6 +22,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const [showWireframe, setShowWireframe] = useState(true);
+  const [webglError, setWebglError] = useState<string | null>(null);
   const [showNodes, setShowNodes] = useState(false);
   const [showSprings, setShowSprings] = useState(true);
   const [showLoads, setShowLoads] = useState(true);
@@ -33,6 +35,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
 
   // Orbit state
   const isDraggingRef = useRef(false);
+  const isPanRef = useRef(false);
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
   const rotationRef = useRef({ x: 0.45, y: -0.65 });
   const distanceRef = useRef(Math.max(geometry.clearSpan, geometry.totalLength) * 1.6);
@@ -52,7 +55,16 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    // WebGL desteği kontrolü — tarayıcı desteklemiyorsa kullanıcıya bilgi ver
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    } catch {
+      setWebglError(
+        'Bu tarayıcıda WebGL desteği bulunamadı. 3B kabuk mesh görünümü için WebGL destekli bir tarayıcı (Chrome, Edge, Firefox) kullanın.'
+      );
+      return;
+    }
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
@@ -106,6 +118,16 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
     modelData.joints.forEach((j) => jointMap.set(j.id, { x: j.x, y: j.y, z: j.z }));
 
     // Build Shell Meshes
+    // NOT: Kabuk sayısı 0.25 m mesh'te 3500'i aşabildiği için her eleman için
+    // ayrı nesne oluşturmak yerine malzemeye göre TEK birleşik geometri üretilir
+    // (draw call sayısı binlerden 3'e düşer).
+    const shellGeoms: Record<'top' | 'bottom' | 'wall', THREE.BufferGeometry[]> = {
+      top: [],
+      bottom: [],
+      wall: [],
+    };
+    const wireGeoms: THREE.BufferGeometry[] = [];
+
     modelData.shells.forEach((shell) => {
       const p1 = jointMap.get(shell.jointIds[0])!;
       const p2 = jointMap.get(shell.jointIds[1])!;
@@ -130,12 +152,9 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
       geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
       geom.computeVertexNormals();
 
-      let chosenMat = matTop;
-      if (shell.part === 'bottom') chosenMat = matBottom;
-      if (shell.part === 'left' || shell.part === 'right') chosenMat = matWall;
-
-      const mesh = new THREE.Mesh(geom, chosenMat);
-      culvertGroup.add(mesh);
+      if (shell.part === 'bottom') shellGeoms.bottom.push(geom);
+      else if (shell.part === 'left' || shell.part === 'right') shellGeoms.wall.push(geom);
+      else shellGeoms.top.push(geom);
 
       // Shell wireframe border
       if (showWireframe) {
@@ -151,13 +170,44 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
           p1.x, p1.z, p1.y,
         ]);
         wireGeom.setAttribute('position', new THREE.BufferAttribute(wireVertices, 3));
-        const line = new THREE.LineSegments(
-          wireGeom,
-          new THREE.LineBasicMaterial({ color: 0x93c5fd, linewidth: 1, transparent: true, opacity: 0.6 })
-        );
-        culvertGroup.add(line);
+        wireGeoms.push(wireGeom);
       }
     });
+
+    // Birleşik kabuk geometrileri (malzeme başına tek nesne)
+    const addMerged = (
+      geoms: THREE.BufferGeometry[],
+      material: THREE.Material
+    ) => {
+      if (geoms.length === 0) return;
+      const merged = mergeGeometries(geoms, false);
+      geoms.forEach((g) => g.dispose());
+      if (merged) {
+        culvertGroup.add(new THREE.Mesh(merged, material));
+      }
+    };
+    addMerged(shellGeoms.top, matTop);
+    addMerged(shellGeoms.bottom, matBottom);
+    addMerged(shellGeoms.wall, matWall);
+
+    // Birleşik tel çizgisi
+    if (wireGeoms.length > 0) {
+      const mergedWire = mergeGeometries(wireGeoms, false);
+      wireGeoms.forEach((g) => g.dispose());
+      if (mergedWire) {
+        culvertGroup.add(
+          new THREE.LineSegments(
+            mergedWire,
+            new THREE.LineBasicMaterial({
+              color: 0x93c5fd,
+              linewidth: 1,
+              transparent: true,
+              opacity: 0.6,
+            })
+          )
+        );
+      }
+    }
 
     // 5. Node Points
     if (showNodes) {
@@ -251,6 +301,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
 
     const onMouseDown = (e: MouseEvent) => {
       isDraggingRef.current = true;
+      isPanRef.current = e.button === 2; // Sağ tuş → kaydırma (pan)
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
     };
 
@@ -259,11 +310,21 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
       const deltaX = e.clientX - previousMousePositionRef.current.x;
       const deltaY = e.clientY - previousMousePositionRef.current.y;
 
-      rotationRef.current.y += deltaX * 0.008;
-      rotationRef.current.x = Math.max(
-        0.05,
-        Math.min(Math.PI / 2 - 0.05, rotationRef.current.x + deltaY * 0.008)
-      );
+      if (isPanRef.current) {
+        // Kameranın sağ/sağ-yukarı yönleri boyunca hedef noktayı kaydır
+        const panScale = (distanceRef.current * 0.0016);
+        const right = new THREE.Vector3();
+        const up = new THREE.Vector3();
+        camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+        targetRef.current.addScaledVector(right, -deltaX * panScale);
+        targetRef.current.addScaledVector(up, deltaY * panScale);
+      } else {
+        rotationRef.current.y += deltaX * 0.008;
+        rotationRef.current.x = Math.max(
+          0.05,
+          Math.min(Math.PI / 2 - 0.05, rotationRef.current.x + deltaY * 0.008)
+        );
+      }
 
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
       updateCameraPosition();
@@ -271,6 +332,11 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
 
     const onMouseUp = () => {
       isDraggingRef.current = false;
+      isPanRef.current = false;
+    };
+
+    const onContextMenu = (e: Event) => {
+      e.preventDefault(); // Sağ tuş menüsü pan modunda engellenir
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -284,6 +350,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     domElement.addEventListener('wheel', onWheel, { passive: false });
+    domElement.addEventListener('contextmenu', onContextMenu);
 
     // Render loop
     let animId: number;
@@ -308,6 +375,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
       domElement.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      domElement.removeEventListener('contextmenu', onContextMenu);
       domElement.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
@@ -393,6 +461,21 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
       {/* 3D WebGL Canvas */}
       <div ref={mountRef} className="flex-1 w-full h-full cursor-grab active:cursor-grabbing" />
 
+      {/* WebGL desteklenmediğinde bilgilendirme */}
+      {webglError && (
+        <div className="absolute inset-0 flex items-center justify-center p-8 bg-slate-950/90">
+          <div className="max-w-md text-center bg-slate-900 border border-slate-800 rounded-lg p-6">
+            <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-white mb-2">3B Görünüm Kullanılamıyor</p>
+            <p className="text-xs text-slate-400 leading-relaxed">{webglError}</p>
+            <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+              Diğer sekmeler (2B kesit, SAP2000 tabloları, donatı tahkiki ve malzeme metrajı)
+              etkilenmez ve kullanılabilir.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Bottom Floating Legend / Stats */}
       <div className="absolute bottom-4 left-4 bg-slate-900/90 backdrop-blur-xs border border-slate-800 rounded-lg p-3 text-xs text-slate-300 shadow-xl pointer-events-none flex flex-col gap-1.5 font-mono">
         <div className="text-[11px] font-bold text-white uppercase tracking-wider mb-0.5">
@@ -415,7 +498,7 @@ export const Mesh3DViewer: React.FC<Mesh3DViewerProps> = ({
           <span className="font-semibold text-emerald-400">{modelData.combinations.length} adet</span>
         </div>
         <div className="mt-1 pt-1.5 border-t border-slate-800 text-[10px] text-slate-500">
-          Sol tık: Döndür · Sağ tık: Kaydır · Tekerlek: Yakınlaş
+          Sol tık: Döndür · Sağ tık: Kaydır (pan) · Tekerlek: Yakınlaştır
         </div>
       </div>
     </div>

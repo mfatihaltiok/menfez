@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { SectionRebarDesign, CulvertGeometry, SoilAndMaterialParams } from '../types/culvert';
-import { ShieldCheck, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
 
 interface RebarDesignViewProps {
   sections: SectionRebarDesign[];
@@ -14,6 +14,7 @@ interface RebarDesignViewProps {
     maxShearKn: number;
     governingSection: string;
     allPassed: boolean;
+    crackLimitedSections: number;
   };
   geometry: CulvertGeometry;
   soil: SoilAndMaterialParams;
@@ -25,6 +26,17 @@ export const RebarDesignView: React.FC<RebarDesignViewProps> = ({
   geometry,
   soil,
 }) => {
+  // Donatı seçimlerini kesitlerden oku (metraj ve çizimlerle aynı kaynak)
+  const find = (prefix: string) => sections.find((s) => s.sectionName.startsWith(prefix));
+  const topSpan = find('Üst Plak Açıklık');
+  const topSupport = find('Üst Plak Mesnet');
+  const botSpan = find('Alt Plak Açıklık');
+  const botSupport = find('Alt Plak Mesnet');
+  const wallInner = find('Yan Duvar Açıklık');
+  const wallOuter = find('Yan Duvar Mesnet');
+  const bar = (s?: { providedBarDia: number; providedSpacing: number }) =>
+    s ? `Φ${s.providedBarDia}/${s.providedSpacing}` : '—';
+
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-900 overflow-y-auto p-5 space-y-5">
       {/* KPI Cards */}
@@ -107,9 +119,15 @@ export const RebarDesignView: React.FC<RebarDesignViewProps> = ({
               f<sub>ck</sub> = {soil.concreteGrade} ({soil.concreteGrade === 'C30/37' ? '30 MPa' : '25-35 MPa'}), f<sub>yk</sub> = {soil.steelGrade} (420 MPa), Paspayı: {soil.concreteCover} mm
             </span>
           </div>
-          <span className="text-xs font-mono px-2.5 py-1 bg-slate-800 rounded text-slate-300">
-            Birim Şerit: b = 1.0 m
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono px-2.5 py-1 bg-slate-800 rounded text-slate-300">
+              Birim Şerit: b = 1.0 m
+            </span>
+            <span className="text-xs font-mono px-2.5 py-1 bg-slate-800 rounded text-slate-300">
+              Açıklık: {geometry.clearSpan.toFixed(2)} m · Duvar:{' '}
+              {geometry.sideWallThickness.toFixed(2)} m
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -174,6 +192,25 @@ export const RebarDesignView: React.FC<RebarDesignViewProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Yöntem ve kapsam notu */}
+        <div className="px-4 py-3 bg-slate-900/60 border-t border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+          <strong className="text-slate-300">Yöntem:</strong> Kesit tesirleri tek geçişli yaklaşık
+          çerçeve moment dağılımı ile hesaplanmıştır (iteratif moment dağılımı değildir); kesin
+          sonuçlar için SAP2000 kabuk modeli esas alınmalıdır. Donatı seçimi eğilme şartını ve
+          çatlak genişliği sınırını (w<sub>k</sub> ≤ 0.20 mm) birlikte sağlayan en ekonomik
+          çözümü arar; aynı çap ve aralıklar <strong className="text-slate-300">Malzeme Metrajı</strong>{' '}
+          sekmesindeki donatı listesinde kullanılır.
+          {summary.crackLimitedSections > 0 && (
+            <>
+              {' '}
+              <span className="text-amber-400">
+                (Bu tasarımda {summary.crackLimitedSections} kesitte donatı miktarı çatlak sınırı
+                tarafından belirlenmiştir.)
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Structural Reinforcement Detailing Diagram */}
@@ -189,13 +226,13 @@ export const RebarDesignView: React.FC<RebarDesignViewProps> = ({
           </div>
           <div className="flex items-center gap-4 text-xs font-mono text-slate-400">
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Ana Çekme Donatısı (Φ20)
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Ana Çekme Donatısı ({bar(topSpan)})
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" /> Mesnet & Köşe Donatısı (Φ20)
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" /> Mesnet &amp; Köşe Donatısı ({bar(topSupport)})
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Boyuna Dağıtma Donatısı (Φ14)
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Boyuna Dağıtma Donatısı (Φ14/20)
             </span>
           </div>
         </div>
@@ -247,16 +284,16 @@ export const RebarDesignView: React.FC<RebarDesignViewProps> = ({
 
             {/* Annotation callouts */}
             <text x="350" y="44" textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="bold" className="font-mono">
-              Üst Plak: Φ20/15 (Alt) + Φ20/15 (Üst) · Dağıtma: Φ14/20
+              Üst Plak: {bar(topSpan)} (Alt) + {bar(topSupport)} (Üst) · Dağıtma: Φ14/20
             </text>
             <text x="350" y="204" textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="bold" className="font-mono">
-              Alt Plak: Φ20/15 (Üst Çekme) + Φ20/15 (Alt) · Dağıtma: Φ14/20
+              Alt Plak: {bar(botSpan)} (Üst Çekme) + {bar(botSupport)} (Alt) · Dağıtma: Φ14/20
             </text>
             <text x="40" y="125" textAnchor="middle" fill="#93c5fd" fontSize="10" transform="rotate(-90 40,125)" className="font-mono">
-              Sol Duvar: Dış Φ18/15 · İç Φ16/15
+              Sol Duvar: Dış {bar(wallOuter)} · İç {bar(wallInner)}
             </text>
             <text x="660" y="125" textAnchor="middle" fill="#93c5fd" fontSize="10" transform="rotate(90 660,125)" className="font-mono">
-              Sağ Duvar: Dış Φ18/15 · İç Φ16/15
+              Sağ Duvar: Dış {bar(wallOuter)} · İç {bar(wallInner)}
             </text>
           </svg>
         </div>

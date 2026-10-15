@@ -1,6 +1,9 @@
 /**
  * Bill of Quantities (BOQ / Malzeme Metrajı) Calculator for TCDD Box Culverts
  * Calculates Concrete, Formwork, Detailed Rebar Schedule (Bar Bending), Earthwork, and Waterproofing
+ *
+ * Donatı metrajı, yapısal çözücünün (structuralSolver) seçtiği çap ve aralıklardan
+ * alınır; böylece "Donatı & Tahkik" sekmesi ile metraj birbirini doğrular.
  */
 
 import {
@@ -10,13 +13,21 @@ import {
   QuantitySurveyReport,
   RebarScheduleItem,
   MaterialQuantityItem,
+  SectionRebarDesign,
 } from '../types/culvert';
+
+/** Kazı çalışma payı (her yandan) */
+const WORKING_SPACE = 0.6; // m
+
+/** Grobeton kalınlığı */
+const LEAN_CONCRETE_THICKNESS = 0.1; // m
 
 export function calculateQuantitySurvey(
   geo: CulvertGeometry,
   rail: RailwayLoadingParams,
   costs: UnitCostParams,
-  concreteGrade: string
+  concreteGrade: string,
+  sections: SectionRebarDesign[] = []
 ): QuantitySurveyReport {
   const bExt = geo.clearSpan + 2 * geo.sideWallThickness;
   const hExt = geo.clearHeight + geo.topSlabThickness + geo.bottomSlabThickness;
@@ -31,23 +42,21 @@ export function calculateQuantitySurvey(
   const vConcreteTotal = Number((vTop + vBot + vWalls + vHaunch).toFixed(2));
 
   // 2. Kalıp Yüzey Alanları (m²)
-  // İç kalıp
+  // İç kalıp: üst plak alt yüzeyi (tavan) + yan duvar iç yüzeyleri + pah yüzeyleri
   const aInnerTop = geo.clearSpan * L;
   const aInnerWalls = 2 * geo.clearHeight * L;
   const haunchHypotenuse = Math.sqrt(Math.pow(geo.haunchWidth, 2) + Math.pow(geo.haunchHeight, 2));
   const aInnerHaunches = 2 * haunchHypotenuse * L; // Yalnızca 2 üst pah
   const aInnerFormwork = aInnerTop + aInnerWalls + aInnerHaunches;
 
-  // Dış kalıp
-  const aOuterWalls = 2 * hExt * L;
-
-  // Alın / Başlık kalıpları (Giriş ve çıkış portalleri)
+  // Dış yüzeyler (üst plak üstü, duvar dışları, taban plak altı) toprakla/yalıtım ile
+  // temas ettiğinden kalıp yapılmaz. Yalnızca alın (portal) aynaları kalıplanır.
   const aPortals = 2 * (bExt * hExt - geo.clearSpan * geo.clearHeight);
 
-  const aFormworkTotal = Number((aInnerFormwork + aOuterWalls + aPortals).toFixed(2));
+  const aFormworkTotal = Number((aInnerFormwork + aPortals).toFixed(2));
 
   // 3. Detaylı Donatı Metrajı ve Bar Bending Schedule
-  // Birim ağırlık formülü: w = d^2 * 0.006165 kg/m
+  // Birim ağırlık: w = π · d² · 7850 / 4  (kg/m)
   function getUnitWeight(dMm: number): number {
     return Number(((Math.PI * Math.pow(dMm / 1000, 2) * 7850) / 4).toFixed(3));
   }
@@ -55,100 +64,102 @@ export function calculateQuantitySurvey(
   const rebarSchedule: RebarScheduleItem[] = [];
   let posCounter = 1;
 
-  // Poz 1: Üst Plak Enine Çekme Donatısı (Alt Sıra) - Phi 20 / 15 cm
-  const spacing1 = 0.15;
-  const count1 = Math.ceil(L / spacing1) + 1;
-  const len1 = bExt + 2 * 0.4; // Gönyeli boy
-  const wUnit1 = getUnitWeight(20);
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Üst Plak Alt Donatı (Enine Çekme)',
-    barDiameter: 20,
-    shapeCode: 'U-Gönyeli Çubuk',
-    barCount: count1,
-    barLength: Number(len1.toFixed(2)),
-    totalLength: Number((count1 * len1).toFixed(1)),
-    unitWeight: wUnit1,
-    totalWeightKg: Number((count1 * len1 * wUnit1).toFixed(1)),
-  });
+  /** Yapısal çözücüden seçilen çap/aralığı (yoksa varsayılan) */
+  function pick(sectionPart: string, fallbackDia: number, fallbackSpacingCm: number) {
+    const found = sections.find((s) => s.sectionName.startsWith(sectionPart));
+    if (found) {
+      return { dia: found.providedBarDia, spacing: found.providedSpacing / 100 };
+    }
+    return { dia: fallbackDia, spacing: fallbackSpacingCm / 100 };
+  }
 
-  // Poz 2: Üst Plak Mesnet Pilyesi/Üst Donatı - Phi 20 / 15 cm
-  const count2 = Math.ceil(L / spacing1) + 1;
-  const len2 = bExt + 2 * 0.5;
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Üst Plak Mesnet Donatısı (Negatif Moment)',
-    barDiameter: 20,
-    shapeCode: 'U-Gönyeli Çubuk',
-    barCount: count2,
-    barLength: Number(len2.toFixed(2)),
-    totalLength: Number((count2 * len2).toFixed(1)),
-    unitWeight: wUnit1,
-    totalWeightKg: Number((count2 * len2 * wUnit1).toFixed(1)),
-  });
+  /** Bir ana donatı pozunu (enine çekme/mesnet) metraja ekler */
+  function pushMainBar(
+    element: string,
+    shapeCode: string,
+    dia: number,
+    spacingM: number,
+    lengthM: number,
+    multiplier: number = 1
+  ) {
+    const count = (Math.ceil(L / spacingM) + 1) * multiplier;
+    const wUnit = getUnitWeight(dia);
+    rebarSchedule.push({
+      posNo: posCounter++,
+      element,
+      barDiameter: dia,
+      shapeCode,
+      barCount: count,
+      barLength: Number(lengthM.toFixed(2)),
+      totalLength: Number((count * lengthM).toFixed(1)),
+      unitWeight: wUnit,
+      totalWeightKg: Number((count * lengthM * wUnit).toFixed(1)),
+    });
+  }
 
-  // Poz 3: Alt Plak Enine Çekme Donatısı (Üst Sıra) - Phi 20 / 15 cm
-  const count3 = Math.ceil(L / spacing1) + 1;
-  const len3 = bExt + 2 * 0.4;
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Alt Plak Üst Donatı (Açıklık Çekme)',
-    barDiameter: 20,
-    shapeCode: 'U-Gönyeli Çubuk',
-    barCount: count3,
-    barLength: Number(len3.toFixed(2)),
-    totalLength: Number((count3 * len3).toFixed(1)),
-    unitWeight: wUnit1,
-    totalWeightKg: Number((count3 * len3 * wUnit1).toFixed(1)),
-  });
+  // Poz 1: Üst Plak Enine Çekme Donatısı (Alt Sıra) — yapısal çözücü seçimi
+  const topSpan = pick('Üst Plak Açıklık', 20, 15);
+  pushMainBar(
+    'Üst Plak Alt Donatı (Enine Çekme)',
+    'U-Gönyeli Çubuk',
+    topSpan.dia,
+    topSpan.spacing,
+    bExt + 2 * 0.4 // 40 cm gönye payı
+  );
 
-  // Poz 4: Alt Plak Alt Donatı (Mesnet & Zemin Basıncı) - Phi 20 / 15 cm
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Alt Plak Alt Donatı (Mesnet & Aşınma)',
-    barDiameter: 20,
-    shapeCode: 'U-Gönyeli Çubuk',
-    barCount: count3,
-    barLength: Number(len3.toFixed(2)),
-    totalLength: Number((count3 * len3).toFixed(1)),
-    unitWeight: wUnit1,
-    totalWeightKg: Number((count3 * len3 * wUnit1).toFixed(1)),
-  });
+  // Poz 2: Üst Plak Mesnet Donatısı (Üst Sıra) — yapısal çözücü seçimi
+  const topSupport = pick('Üst Plak Mesnet', 20, 15);
+  pushMainBar(
+    'Üst Plak Mesnet Donatısı (Negatif Moment)',
+    'U-Gönyeli Çubuk',
+    topSupport.dia,
+    topSupport.spacing,
+    bExt + 2 * 0.5 // 50 cm gönye payı
+  );
 
-  // Poz 5: Yan Duvar Dış Donatı (Düşey) - Phi 18 / 15 cm (2 Duvar)
-  const count5 = (Math.ceil(L / spacing1) + 1) * 2;
-  const len5 = hExt + 2 * 0.45;
-  const wUnit18 = getUnitWeight(18);
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Yan Duvar Dış Düşey Donatısı (Zemin İtkisi)',
-    barDiameter: 18,
-    shapeCode: 'L-Gönyeli Düşey Çubuk',
-    barCount: count5,
-    barLength: Number(len5.toFixed(2)),
-    totalLength: Number((count5 * len5).toFixed(1)),
-    unitWeight: wUnit18,
-    totalWeightKg: Number((count5 * len5 * wUnit18).toFixed(1)),
-  });
+  // Poz 3: Alt Plak Enine Çekme Donatısı (Üst Sıra) — yapısal çözücü seçimi
+  const botSpan = pick('Alt Plak Açıklık', 20, 15);
+  pushMainBar(
+    'Alt Plak Üst Donatı (Açıklık Çekme)',
+    'U-Gönyeli Çubuk',
+    botSpan.dia,
+    botSpan.spacing,
+    bExt + 2 * 0.4
+  );
 
-  // Poz 6: Yan Duvar İç Donatı (Düşey) - Phi 16 / 15 cm (2 Duvar)
-  const count6 = (Math.ceil(L / spacing1) + 1) * 2;
-  const len6 = hExt + 2 * 0.35;
-  const wUnit16 = getUnitWeight(16);
-  rebarSchedule.push({
-    posNo: posCounter++,
-    element: 'Yan Duvar İç Düşey Donatısı',
-    barDiameter: 16,
-    shapeCode: 'L-Gönyeli Düşey Çubuk',
-    barCount: count6,
-    barLength: Number(len6.toFixed(2)),
-    totalLength: Number((count6 * len6).toFixed(1)),
-    unitWeight: wUnit16,
-    totalWeightKg: Number((count6 * len6 * wUnit16).toFixed(1)),
-  });
+  // Poz 4: Alt Plak Alt Donatı (Mesnet & Aşınma) — yapısal çözücü seçimi
+  const botSupport = pick('Alt Plak Mesnet', 20, 15);
+  pushMainBar(
+    'Alt Plak Alt Donatı (Mesnet & Aşınma)',
+    'U-Gönyeli Çubuk',
+    botSupport.dia,
+    botSupport.spacing,
+    bExt + 2 * 0.4
+  );
+
+  // Poz 5: Yan Duvar Dış Donatısı (Düşey) — yapısal çözücü seçimi
+  const wallOuter = pick('Yan Duvar Mesnet', 18, 15);
+  pushMainBar(
+    'Yan Duvar Dış Düşey Donatısı (Zemin İtkisi)',
+    'L-Gönyeli Düşey Çubuk',
+    wallOuter.dia,
+    wallOuter.spacing,
+    hExt + 2 * 0.45,
+    2 // 2 duvar
+  );
+
+  // Poz 6: Yan Duvar İç Donatısı (Düşey) — yapısal çözücü seçimi
+  const wallInner = pick('Yan Duvar Açıklık', 16, 15);
+  pushMainBar(
+    'Yan Duvar İç Düşey Donatısı',
+    'L-Gönyeli Düşey Çubuk',
+    wallInner.dia,
+    wallInner.spacing,
+    hExt + 2 * 0.35,
+    2
+  );
 
   // Poz 7: Boyuna Dağıtma Donatıları (Tüm Plak ve Duvarlarda) - Phi 14 / 20 cm
-  // Çevre boyunca dağıtma donatısı adedi
   const perimeter = 2 * (bExt + hExt);
   const count7 = Math.ceil(perimeter / 0.2) * 2; // Çift sıra
   const len7 = L + 0.6; // Bindirme payı
@@ -168,6 +179,7 @@ export function calculateQuantitySurvey(
   // Poz 8: Üst Köşe Pah Takviye Donatısı - Phi 16 / 20 cm (Yalnızca Üst Tabliye 2 Pah)
   const count8 = (Math.ceil(L / 0.2) + 1) * 2;
   const len8 = 1.2;
+  const wUnit16 = getUnitWeight(16);
   rebarSchedule.push({
     posNo: posCounter++,
     element: 'Üst Köşe Pah Takviye Donatısı (45° Diyagonal - 2 Üst Köşe)',
@@ -180,7 +192,7 @@ export function calculateQuantitySurvey(
     totalWeightKg: Number((count8 * len8 * wUnit16).toFixed(1)),
   });
 
-  // Poz 9: Duvar ve Plak Çirozları (S-Kancalar) - Phi 12 / 40x40 cm
+  // Poz 9: Duvar ve Plak Çirozları (S-Kancalar) - Phi 12 / ~40x40 cm
   const areaSlabsAndWalls = 2 * bExt * L + 2 * hExt * L;
   const count9 = Math.ceil(areaSlabsAndWalls * 6); // 6 adet/m²
   const len9 = 0.65;
@@ -220,13 +232,18 @@ export function calculateQuantitySurvey(
     }));
 
   // 4. Toprak İşleri (Kazı, Dolgu, Grobeton)
-  const bExcavation = bExt + 2 * 0.6; // 60 cm çalışma payı
-  const hExcavation = rail.fillHeight + hExt + 0.1; // 10 cm grobeton dahil
+  // Temel çukuru: menfez dış ölçüleri + her yandan 0.60 m çalışma payı.
+  // Derinlik: üst plak üst kotundan (balast üstü) taban grobetonu altına kadar.
+  // Kazı dik kenarlı (kazı kazığı/iksali); kazılan malzeme geri dolgu için stoklanır.
+  const bExcavation = bExt + 2 * WORKING_SPACE;
+  const hExcavation = rail.fillHeight + hExt + LEAN_CONCRETE_THICKNESS;
   const vExcavation = Number((bExcavation * hExcavation * L).toFixed(2));
-  const vLeanConcrete = Number((bExcavation * 0.1 * L).toFixed(2));
+  const vLeanConcrete = Number((bExcavation * LEAN_CONCRETE_THICKNESS * L).toFixed(2));
+  // Geri dolgu: kazılan hacimden beton ve grobeton hacmi düşülür (menfez çevresindeki boşluk)
   const vBackfill = Number(Math.max(vExcavation - (vConcreteTotal + vLeanConcrete), 0).toFixed(2));
 
   // 5. Su Yalıtımı ve Koruma
+  // Üst plak üst yüzeyi + yan duvar dış yüzeyleri (dolgu altında kalan kısım dahil)
   const aWaterproofing = Number((bExt * L + 2 * hExt * L).toFixed(2));
   const aDrainageBoard = aWaterproofing;
 
@@ -248,7 +265,7 @@ export function calculateQuantitySurvey(
       quantity: rebarWeightTotalTon,
       unitPrice: costs.rebarPrice,
       totalCost: Number((rebarWeightTotalTon * costs.rebarPrice).toFixed(2)),
-      notes: `Donatı Yoğunluğu: ${rebarRatioKgPerM3} kg/m³`,
+      notes: `Donatı yoğunluğu: ${rebarRatioKgPerM3} kg/m³ — çap/aralıklar tahkik sekmesiyle aynıdır`,
     },
     {
       posNo: 'TCDD.21.011',
@@ -257,7 +274,7 @@ export function calculateQuantitySurvey(
       quantity: aFormworkTotal,
       unitPrice: costs.formworkPrice,
       totalCost: Number((aFormworkTotal * costs.formworkPrice).toFixed(2)),
-      notes: 'İç, dış ve portal aynaları',
+      notes: 'Menfez iç tavanı, iç yan duvarlar, pah yüzeyleri ve portal aynaları (dış yüzeyler kalıpsız)',
     },
     {
       posNo: 'TCDD.14.005',
@@ -266,7 +283,7 @@ export function calculateQuantitySurvey(
       quantity: vExcavation,
       unitPrice: costs.excavationPrice,
       totalCost: Number((vExcavation * costs.excavationPrice).toFixed(2)),
-      notes: 'Çalışma payı ve şevlendirme dahil',
+      notes: `Her yandan ${WORKING_SPACE.toFixed(2)} m çalışma payı, dik kazı; kazılan malzeme stoklanır`,
     },
     {
       posNo: 'TCDD.14.080',
@@ -275,7 +292,7 @@ export function calculateQuantitySurvey(
       quantity: vBackfill,
       unitPrice: costs.backfillPrice,
       totalCost: Number((vBackfill * costs.backfillPrice).toFixed(2)),
-      notes: 'Kompaktlama ve sıkıştırma testleri dahil',
+      notes: 'Menfez çevresindeki boşluk; tabakalar halinde sıkıştırma testleri dahil',
     },
     {
       posNo: 'TCDD.15.100',
@@ -293,7 +310,7 @@ export function calculateQuantitySurvey(
       quantity: aWaterproofing,
       unitPrice: costs.waterproofingPrice,
       totalCost: Number((aWaterproofing * costs.waterproofingPrice).toFixed(2)),
-      notes: 'Üst plak ve yan duvar dış yüzeyleri',
+      notes: 'Üst plak üst yüzeyi ve yan duvar dış yüzeyleri',
     },
   ];
 
