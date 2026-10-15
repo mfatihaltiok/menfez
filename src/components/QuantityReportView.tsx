@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { QuantitySurveyReport, CulvertGeometry } from '../types/culvert';
-import { FileSpreadsheet, Download, Copy, Check, PieChart, Layers, DollarSign } from 'lucide-react';
+import { FileSpreadsheet, Copy, Check } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface QuantityReportViewProps {
   report: QuantitySurveyReport;
@@ -21,14 +22,16 @@ export const QuantityReportView: React.FC<QuantityReportViewProps> = ({
   const [activeTab, setActiveTab] = useState<'boq' | 'rebar' | 'breakdown'>('boq');
   const [copied, setCopied] = useState(false);
 
-  const copyBOQToClipboard = () => {
+  const copyBOQToClipboard = async () => {
     const lines = ['Poz No\tİmalat Tanımı\tBirim\tMiktar\tBirim Fiyat\tToplam Tutar'];
     report.items.forEach((item) => {
       lines.push(`${item.posNo}\t${item.description}\t${item.unit}\t${item.quantity}\t${item.unitPrice}\t${item.totalCost}`);
     });
-    navigator.clipboard.writeText(lines.join('\n'));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyToClipboard(lines.join('\r\n'));
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
@@ -123,6 +126,38 @@ export const QuantityReportView: React.FC<QuantityReportViewProps> = ({
       </div>
 
       {/* Main Table Card */}
+      {/* Kesit özeti */}
+      <div className="bg-slate-950 rounded-lg border border-slate-800 px-4 py-3 text-[11px] text-slate-400 font-mono flex flex-wrap items-center gap-x-6 gap-y-1 shrink-0">
+        <span>
+          İç açıklık:{' '}
+          <strong className="text-white">
+            {geometry.clearSpan.toFixed(2)} × {geometry.clearHeight.toFixed(2)} m
+          </strong>
+        </span>
+        <span>
+          Menfez boyu: <strong className="text-white">{geometry.totalLength.toFixed(2)} m</strong>
+        </span>
+        <span>
+          Plak/davar:{' '}
+          <strong className="text-white">
+            {geometry.topSlabThickness.toFixed(2)} / {geometry.bottomSlabThickness.toFixed(2)} /{' '}
+            {geometry.sideWallThickness.toFixed(2)} m
+          </strong>
+        </span>
+        <span>
+          Dış ebat:{' '}
+          <strong className="text-white">
+            {(geometry.clearSpan + 2 * geometry.sideWallThickness).toFixed(2)} ×{' '}
+            {(
+              geometry.clearHeight +
+              geometry.topSlabThickness +
+              geometry.bottomSlabThickness
+            ).toFixed(2)}{' '}
+            m
+          </strong>
+        </span>
+      </div>
+
       <div className="bg-slate-950 rounded-lg border border-slate-800 overflow-hidden flex-1 flex flex-col">
         {/* Table Sub-Nav */}
         <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
@@ -145,7 +180,7 @@ export const QuantityReportView: React.FC<QuantityReportViewProps> = ({
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              Çap Bazlı Donatı Listesi (BBS)
+              Poz Bazlı Donatı Listesi (BBS)
             </button>
             <button
               onClick={() => setActiveTab('breakdown')}

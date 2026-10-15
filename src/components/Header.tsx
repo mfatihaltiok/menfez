@@ -3,16 +3,19 @@
  */
 
 import React from 'react';
-import { Download, Printer, Layers, RotateCcw, FileSpreadsheet } from 'lucide-react';
+import { Download, Printer, SlidersHorizontal, FileSpreadsheet, RotateCcw } from 'lucide-react';
+
+export type AppTab = '2d' | '3d' | 'sap2000' | 'rebar' | 'boq';
 
 interface HeaderProps {
-  activeTab: '2d' | '3d' | 'sap2000' | 'rebar' | 'boq';
-  onTabChange: (tab: '2d' | '3d' | 'sap2000' | 'rebar' | 'boq') => void;
+  activeTab: AppTab;
+  onTabChange: (tab: AppTab) => void;
   onOpenReport: () => void;
   onDownloadS2K: () => void;
   onExportCSV: () => void;
   onSelectPreset: (presetKey: string) => void;
   onReset: () => void;
+  onToggleInputPanel: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,26 +26,27 @@ export const Header: React.FC<HeaderProps> = ({
   onExportCSV,
   onSelectPreset,
   onReset,
+  onToggleInputPanel,
 }) => {
   return (
-    <header className="flex items-center justify-between gap-8 px-6 py-3.5 bg-slate-900 border-b border-slate-800 text-white shrink-0 sticky top-0 z-40">
+    <header className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 bg-slate-900 border-b border-slate-800 text-white shrink-0 z-40">
       {/* Zone 1: Single text element wordmark */}
-      <div className="flex items-center gap-3 shrink-0">
-        <div className="w-8 h-8 rounded bg-red-600 flex items-center justify-center font-black text-sm tracking-wider shadow-sm">
+      <div className="flex items-center gap-3 shrink-0 min-w-0">
+        <div className="w-8 h-8 rounded bg-red-600 flex items-center justify-center font-black text-sm tracking-wider shadow-sm shrink-0">
           TCDD
         </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold tracking-tight text-white whitespace-nowrap">
-            Kutu Menfez Tasarımı & SAP2000 Modeli
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm sm:text-base font-bold tracking-tight text-white truncate">
+            Kutu Menfez Tasarımı &amp; SAP2000 Modeli
           </span>
-          <span className="text-xs text-slate-400 whitespace-nowrap font-mono">
+          <span className="hidden sm:block text-xs text-slate-400 font-mono truncate">
             UIC 71 Standartı · Kabuk (Shell) Sonlu Eleman
           </span>
         </div>
       </div>
 
       {/* Zone 2: Clean single-line navigation tabs */}
-      <nav className="hidden lg:flex items-center gap-1 p-1 bg-slate-800/90 rounded-lg border border-slate-700/60">
+      <nav className="hidden lg:flex items-center gap-1 p-1 bg-slate-800/90 rounded-lg border border-slate-700/60 shrink-0">
         <button
           onClick={() => onTabChange('2d')}
           className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
@@ -51,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
               : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
           }`}
         >
-          2B Kesit & Yükler
+          2B Kesit &amp; Yükler
         </button>
         <button
           onClick={() => onTabChange('3d')}
@@ -71,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
               : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
           }`}
         >
-          SAP2000 .s2k & Tablolar
+          SAP2000 .s2k &amp; Tablolar
         </button>
         <button
           onClick={() => onTabChange('rebar')}
@@ -81,7 +85,7 @@ export const Header: React.FC<HeaderProps> = ({
               : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
           }`}
         >
-          Donatı & Tahkik
+          Donatı &amp; Tahkik
         </button>
         <button
           onClick={() => onTabChange('boq')}
@@ -96,7 +100,16 @@ export const Header: React.FC<HeaderProps> = ({
       </nav>
 
       {/* Zone 3: Primary Actions and Quick Utilities */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
+        {/* Mobil/tablet için giriş paneli çekmecesi */}
+        <button
+          onClick={onToggleInputPanel}
+          title="Tasarım girdilerini aç/kapat"
+          className="md:hidden p-1.5 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-colors"
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+        </button>
+
         <select
           onChange={(e) => {
             if (e.target.value) {
@@ -105,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
             }
           }}
           defaultValue=""
-          className="bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+          className="hidden sm:block bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
         >
           <option value="" disabled>
             TCDD Tip Şablonları...
@@ -119,18 +132,36 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={onDownloadS2K}
           title="SAP2000 .s2k script dosyasını indir"
-          className="px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
+          className="hidden sm:flex px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-colors items-center gap-1.5 whitespace-nowrap"
         >
           <Download className="w-3.5 h-3.5 text-blue-400" />
           <span>.s2k İndir</span>
         </button>
 
         <button
+          onClick={onExportCSV}
+          title="Malzeme metrajini CSV olarak indir"
+          className="hidden sm:flex px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-colors items-center gap-1.5 whitespace-nowrap"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+          <span>CSV</span>
+        </button>
+
+        <button
+          onClick={onReset}
+          title="Varsayilan TCDD Tip-2 şablonuna dön"
+          className="hidden sm:flex p-1.5 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-colors"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+
+        <button
           onClick={onOpenReport}
-          className="px-3.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap"
+          className="px-3 sm:px-3.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap"
         >
           <Printer className="w-3.5 h-3.5" />
-          <span>Hesap Raporu</span>
+          <span className="hidden sm:inline">Hesap Raporu</span>
+          <span className="sm:hidden">Rapor</span>
         </button>
       </div>
     </header>

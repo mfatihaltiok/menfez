@@ -1,6 +1,18 @@
 /**
  * Structural Analysis and Reinforced Concrete Sizing Solver
  * Compliant with TS 500, TCDD Railway Specifications, and EN 1992-2
+ *
+ * YÖNTEM NOTU
+ * -----------
+ * Menfez, "tek geçişli yaklaşık çerçeve moment dağılımı" ile çözülür:
+ * dağıtma katsayıları üyelerin atalet momentlerinden hesaplanır, ardından
+ * mesnet ve açıklık momentleri FEM düzeltmesiyle yazılır. Bu yöntem
+ * iteratif bir moment dağılımı (Hardy Cross / portföy yöntemi) DEĞİLDİR;
+ * büyüklük mertebesi doğru, kesin değildir. Kesin sonuçlar için SAP2000
+ * kabuk modeli esas alınmalıdır.
+ *
+ * Donatı seçimi hem eğilme (As,req) hem de çatlak genişliği (wk ≤ w_lim)
+ * şartlarını birlikte sağlayacak en ekonomik çözümü arar.
  */
 
 import {
@@ -9,6 +21,27 @@ import {
   UIC71CalculatedLoads,
   SectionRebarDesign,
 } from '../types/culvert';
+
+/** TCDD demiryolu şartnamesi çatlak genişliği üst sınırı (mm) */
+export const CRACK_WIDTH_LIMIT = 0.2;
+
+/** TS 500 minimum donatı oranı (plak) */
+const RHO_MIN = 0.002;
+
+/** Donatı çapı adayları (mm) — TS 500 üretim çapları */
+const BAR_DIAMETERS = [12, 14, 16, 18, 20, 22, 25];
+
+/** Donatı aralığı adayları (cm) — en seyrekten başlanarak sıklaştırılır */
+const SPACING_CANDIDATES = [20, 15, 12.5, 10];
+
+/** Çelik elastisite modülü (MPa) */
+const ES = 200000;
+
+/** Çekme dayanımı katsayısı (EN 1992-2) */
+const KT = 0.4;
+
+/** Çekme sertleştirme katsayısı (EN 1992-2) */
+const ALPHA_E = 20;
 
 export function solveCulvertStructuralDesign(
   geo: CulvertGeometry,
@@ -21,9 +54,10 @@ export function solveCulvertStructuralDesign(
     maxShearKn: number;
     governingSection: string;
     allPassed: boolean;
+    crackLimitedSections: number;
   };
 } {
-  // 1. Kesit Çerçeve Boyutları
+  // 1. Kesit Çerçeve Boyutları (üye uzunlukları eksenler arasıdır)
   const lSpan = geo.clearSpan + geo.sideWallThickness; // Açıklık (m)
   const hWall = geo.clearHeight + (geo.topSlabThickness + geo.bottomSlabThickness) / 2; // Yükseklik (m)
 
@@ -61,10 +95,8 @@ export function solveCulvertStructuralDesign(
   const femBot = (qbNetULS * lSpan * lSpan) / 12;
   const femWall = (pWallAvgULS * hWall * hWall) / 12;
 
-  // Hardy Cross Yaklaşımı ile Düğüm Noktası Mesnet Momentleri
-  // M_corner_top: Üst köşe mesnet momenti
+  // Yaklaşık mesnet momentleri (tek geçişli dağıtım)
   const mCornerTop = (1 - dfTopSlab * 0.45) * femTop - dfTopSlab * femWall * 0.5;
-  // M_corner_bot: Alt köşe mesnet momenti
   const mCornerBot = (1 - dfBotSlab * 0.45) * femBot - dfBotSlab * femWall * 0.5;
 
   // Açıklık Momentleri
@@ -88,13 +120,30 @@ export function solveCulvertStructuralDesign(
   if (soil.concreteGrade === 'C35/45') fck = 35;
   if (soil.concreteGrade === 'C40/50') fck = 40;
 
-  const fcd = (fck / 1.5) * 1000; // kN/m²
+  const fcd = (fck / 1.5) * 1000; // kN/m² (tasarım basınç dayanımı)
   const fctd = (0.35 * Math.sqrt(fck) / 1.5) * 1000; // Çekme dayanımı (kN/m²)
+  const fctdMPa = fctd / 1000;
 
   const fyk = soil.steelGrade === 'B500C' ? 500 : 420; // MPa
   const fyd = (fyk / 1.15) * 1000; // kN/m²
 
   const cover = soil.concreteCover / 1000; // m (örn 0.05 m)
+
+  // Çatlak genişliği (EN 1992-2 / EN 1992-1-1 Annex L)
+  function calcCrackWidth(mSLS: number, d: number, asProvM2: number): number {
+    const b = 1.0;
+    // Çelik gerilmesi (çekme donatısı) — lineer elastik, taşıma gücü sınırına kadar
+    const sigmaS = Math.min((mSLS / (0.9 * d * asProvM2)) / 1000, 300); // MPa
+    // Etkin çekme donatısı oranı
+    const rhoEff = asProvM2 / (b * d);
+    // Ortalama gerilme (çekme sertleştirme dikkate alınmış)
+    const epsSm =
+      Math.max((sigmaS - KT * fctdMPa) / ES, 0) * ((1 + ALPHA_E * rhoEff) / (1 + rhoEff));
+    // Ortalama çatlak aralığı (EN 1992-1-1 Denk. 7.2)
+    const srM = 1.3 * (cover * 1000 + 0.425 * d * 1000); // mm
+    const wk = srM * epsSm; // mm
+    return Math.min(Math.max(wk, 0.05), 0.35);
+  }
 
   // Kesit Hesaplayıcı Fonksiyonu
   function designSection(
@@ -103,68 +152,108 @@ export function solveCulvertStructuralDesign(
     md: number,
     vd: number,
     nd: number,
-    barDiaMm: number = 20
+    preferredDiaMm: number = 20
   ): SectionRebarDesign {
     const b = 1.0; // 1 metre genişlik
-    const d = thickM - cover - barDiaMm / 2000; // Faydalı yükseklik (m)
     const thicknessMm = thickM * 1000;
-    const effectiveDepthMm = d * 1000;
+    const asMin = RHO_MIN * b * thickM * 10000; // cm²/m
 
-    // Boyutsuz moment k = Md / (b * d^2 * fcd)
-    const k = md / (b * d * d * fcd);
-    let omega = 0.05;
-    if (k < 0.37) {
-      omega = 1 - Math.sqrt(Math.max(1 - 2 * k, 0.01));
-    } else {
-      omega = 0.45; // Çift donatı gerekebilir sınır
+    // Donatı çapı adayları: tercih edilen çaptan başlayarak yukarı doğru
+    const diaCandidates = BAR_DIAMETERS.filter((d) => d >= preferredDiaMm);
+
+    // --- Adım 1: Tercih edilen çap ve en sık aralıkla başlayarak gerekli alanı hesapla ---
+    let dia = preferredDiaMm;
+    let d = thickM - cover - dia / 2000;
+    let k = md / (b * d * d * fcd);
+    let omega = k < 0.37 ? 1 - Math.sqrt(Math.max(1 - 2 * k, 0.01)) : 0.45;
+    let asReq = Math.max(omega * b * d * (fcd / fyd) * 10000, asMin);
+
+    // --- Adım 2: Eğilme + çatlak şartlarını birlikte sağlayan (çap, aralık) ---
+    // Öncelik kuralı:
+    //   1) Tercih edilen çaptan başla (detaylandırmada çap tutarlılığı),
+    //   2) Aynı çapta aralığı en seyrekten başlayarak sıklaştır,
+    //   3) Çatlak sınırını sağlayan ilk (çap, aralık) çiftini kabul et.
+    // Eğilme şartını hiçbir kombinasyon sağlamıyorsa en yoğun donatı seçilir.
+    interface Candidate {
+      dia: number;
+      spacing: number;
+      asProv: number;
     }
 
-    // Gerekli Donatı Alanı (cm²/m)
-    let asReq = (omega * b * d * (fcd / fyd)) * 10000;
-    // Minimum donatı TS 500: rho_min = 0.002
-    const asMin = 0.002 * b * thickM * 10000;
-    asReq = Math.max(asReq, asMin);
+    let chosen: Candidate | null = null;
+    let crackGoverned = false;
+    let fallback: Candidate | null = null;
+    let fallbackCrack = Number.POSITIVE_INFINITY;
 
-    // Otomatik donatı çapı ve aralık seçimi
-    // Çap seçenekleri: 16, 20, 22, 25
-    const candidateDias = [barDiaMm, 20, 22, 25, 16];
-    let chosenDia = barDiaMm;
-    let chosenSpacingCm = 15;
-    let chosenAsProv = 0;
-
-    for (const dia of candidateDias) {
-      const singleBarArea = (Math.PI * Math.pow(dia / 10, 2)) / 4; // cm²
-      const spacings = [10, 12.5, 15, 20];
-      for (const s of spacings) {
+    for (const cDia of diaCandidates) {
+      const singleBarArea = (Math.PI * Math.pow(cDia / 10, 2)) / 4; // cm²
+      for (const s of SPACING_CANDIDATES) {
         const asProv = (100 / s) * singleBarArea;
-        if (asProv >= asReq) {
-          chosenDia = dia;
-          chosenSpacingCm = s;
-          chosenAsProv = asProv;
+        if (asProv < asReq) continue; // eğilme şartını sağlamıyor
+
+        const dCand = thickM - cover - cDia / 2000;
+        const wk = calcCrackWidth(md / 1.4, dCand, asProv / 10000);
+
+        if (wk < fallbackCrack) {
+          fallbackCrack = wk;
+          fallback = { dia: cDia, spacing: s, asProv };
+        }
+        if (wk <= CRACK_WIDTH_LIMIT) {
+          chosen = { dia: cDia, spacing: s, asProv };
           break;
         }
       }
-      if (chosenAsProv >= asReq) break;
+      if (chosen) break;
     }
 
-    if (chosenAsProv === 0) {
-      chosenDia = 25;
-      chosenSpacingCm = 10;
-      chosenAsProv = (100 / 10) * ((Math.PI * Math.pow(2.5, 2)) / 4);
+    if (!chosen) {
+      // Çatlak sınırı hiçbir kombinasyonda sağlanamadı → en iyi (en düşük çatlak)
+      // adayı seçilir ve kesit "UYARI" olarak işaretlenir.
+      chosen = fallback;
+      crackGoverned = true;
     }
 
-    // Kesme Güvenliği Kontrolü: Vc = 0.65 * fctd * b * d
-    const vc = 0.65 * fctd * b * d; // kN/m
-    const shearStatus = vd <= vc ? 'OK' : 'ETRIYE_GEREKLI';
+    if (!chosen) {
+      // Hiçbir aday eğilme şartını sağlamıyor → en yoğun donatı
+      const denseDia = diaCandidates[diaCandidates.length - 1];
+      const singleBarArea = (Math.PI * Math.pow(denseDia / 10, 2)) / 4;
+      chosen = { dia: denseDia, spacing: 10, asProv: (100 / 10) * singleBarArea };
+      crackGoverned = true;
+    }
 
-    // Çatlak Genişliği Tahkiki (SLS altında)
-    // TCDD demiryolu şartnamesinde w_max = 0.20 mm
-    const mSLS = md / 1.4;
-    const sigmaS = Math.min((mSLS / (0.9 * d * (chosenAsProv / 10000))) / 1000, 300); // MPa
-    const crackWidth = Number(
-      Math.min(Math.max((sigmaS / 200000) * (3.4 * (cover * 1000) + (0.425 * chosenDia) / 0.01) * 0.6, 0.05), 0.35).toFixed(2)
+    const chosenDia = chosen.dia;
+    const chosenSpacingCm = chosen.spacing;
+    const chosenAsProv = chosen.asProv;
+
+    // Donatı eğilme şartından mı yoksa çatlak sınırından mı belirlendi?
+    // Eğilme şartı için aynı çapta yeterli olan en seyrek aralık bulunur.
+    const singleBarAreaChosen = (Math.PI * Math.pow(chosenDia / 10, 2)) / 4;
+    const flexuralOnlySpacing = SPACING_CANDIDATES.find(
+      (s) => (100 / s) * singleBarAreaChosen >= asReq
     );
-    const crackStatus = crackWidth <= 0.20 ? 'OK' : 'UYARI';
+    if (!crackGoverned && flexuralOnlySpacing !== undefined) {
+      crackGoverned = chosenSpacingCm < flexuralOnlySpacing;
+    }
+
+    // Seçilen çapa göre faydalı yükseklik ve gerekli donatı alanını güncelle
+    d = thickM - cover - chosenDia / 2000;
+    const effectiveDepthMm = d * 1000;
+    k = md / (b * d * d * fcd);
+    omega = k < 0.37 ? 1 - Math.sqrt(Math.max(1 - 2 * k, 0.01)) : 0.45;
+    asReq = Math.max(omega * b * d * (fcd / fyd) * 10000, asMin);
+
+    // Kesme Güvenliği Kontrolü: Vc = 0.65 * fctd * b * d  (TS 500, etriyesiz)
+    const vc = 0.65 * fctd * b * d; // kN/m
+    const shearStatus: 'OK' | 'ETRIYE_GEREKLI' = vd <= vc ? 'OK' : 'ETRIYE_GEREKLI';
+
+    // Çatlak genişliği (SLS altında) — nihai seçim için yeniden hesaplanır
+    const crackWidth = Number(
+      calcCrackWidth(md / 1.4, d, chosenAsProv / 10000).toFixed(2)
+    );
+    const crackStatus: 'OK' | 'UYARI' = crackWidth <= CRACK_WIDTH_LIMIT ? 'OK' : 'UYARI';
+
+    const status: 'OK' | 'UYARI' | 'ETRIYE_GEREKLI' =
+      shearStatus === 'ETRIYE_GEREKLI' ? 'ETRIYE_GEREKLI' : crackStatus === 'OK' ? 'OK' : 'UYARI';
 
     return {
       sectionName,
@@ -183,6 +272,8 @@ export function solveCulvertStructuralDesign(
       shearStatus,
       crackWidth,
       crackStatus,
+      crackGoverned,
+      status,
     };
   }
 
@@ -199,6 +290,7 @@ export function solveCulvertStructuralDesign(
   let maxV = 0;
   let govSec = '';
   let allPassed = true;
+  let crackLimitedSections = 0;
 
   for (const s of sections) {
     if (s.designMoment > maxM) {
@@ -211,6 +303,9 @@ export function solveCulvertStructuralDesign(
     if (s.shearStatus !== 'OK' || s.crackStatus !== 'OK') {
       allPassed = false;
     }
+    if (s.crackGoverned) {
+      crackLimitedSections += 1;
+    }
   }
 
   return {
@@ -220,6 +315,7 @@ export function solveCulvertStructuralDesign(
       maxShearKn: maxV,
       governingSection: govSec,
       allPassed,
+      crackLimitedSections,
     },
   };
 }

@@ -3,30 +3,34 @@
  */
 
 import React, { useState } from 'react';
-import { SAP2000ModelData, CulvertGeometry } from '../types/culvert';
-import { Download, Copy, Check, FileText, Table, Terminal, HelpCircle } from 'lucide-react';
+import { SAP2000ModelData, CulvertGeometry, UIC71CalculatedLoads } from '../types/culvert';
+import { Download, Copy, Check, FileText, Table, HelpCircle } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface Sap2000ExporterViewProps {
   modelData: SAP2000ModelData;
   geometry: CulvertGeometry;
+  loads: UIC71CalculatedLoads;
   onDownloadS2K: () => void;
 }
 
 export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
   modelData,
   geometry,
+  loads,
   onDownloadS2K,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'s2k' | 'joints' | 'shells' | 'loads' | 'springs' | 'combos' | 'guide'>('s2k');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
+  const handleCopy = async (text: string, key: string) => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    }
   };
 
-  // Tablo metinlerini kopyalama formatına dönüştürme (SAP2000 Interactive Database uyumlu TSV formatı)
   // Tablo metinlerini kopyalama formatına dönüştürme (SAP2000 Interactive Database uyumlu TSV formatı)
   const getJointsTSV = () => {
     const rows = ['Joint\tCoordSys\tCoordType\tXorR\tY\tZ\tSpecialJt'];
@@ -165,6 +169,43 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
         </div>
       </div>
 
+      {/* Model Özeti ve Yük Dengesi */}
+      <div className="px-4 py-2.5 bg-slate-900/60 border-b border-slate-800 text-[11px] flex flex-wrap items-center gap-x-5 gap-y-1 text-slate-400 font-mono shrink-0">
+        <span>
+          Düğüm: <strong className="text-white">{modelData.totalNodes}</strong> · Kabuk:{' '}
+          <strong className="text-white">{modelData.totalShells}</strong> · Yay:{' '}
+          <strong className="text-white">{modelData.totalSprings}</strong>
+        </span>
+        <span>
+          Canlı yük: <strong className="text-amber-300">{loads.totalLiveForceKN} kN</strong> ({loads.numTracks} hat) →{' '}
+          <strong className="text-amber-300">{loads.lineLiveLoadKNpm} kN/m</strong>
+        </span>
+        <span>
+          Üst plak basıncı: <strong className="text-amber-300">{loads.qVerticalLiveMax} kN/m²</strong> (Φ
+          {loads.phiReduced})
+        </span>
+        <span>
+          Yayılma: <strong className="text-slate-300">{loads.effectiveWidth} × {loads.effectiveLength} m</strong>
+        </span>
+        <span>
+          Kesit:{' '}
+          <strong className="text-slate-300">
+            {(geometry.clearSpan + 2 * geometry.sideWallThickness).toFixed(2)} ×{' '}
+            {(
+              geometry.clearHeight +
+              geometry.topSlabThickness +
+              geometry.bottomSlabThickness
+            ).toFixed(2)}{' '}
+            m · L = {geometry.totalLength.toFixed(1)} m
+          </strong>
+        </span>
+        {loads.netUpliftPressure > 0 && (
+          <span>
+            Net kaldırma: <strong className="text-red-300">{loads.netUpliftPressure} kN/m²</strong>
+          </span>
+        )}
+      </div>
+
       {/* SubTab Contents */}
       <div className="flex-1 overflow-auto p-4">
         {/* .s2k Code View */}
@@ -173,7 +214,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
               <span className="font-mono text-slate-300">tcdd_box_culvert_sap2000.s2k</span>
               <button
-                onClick={() => copyToClipboard(modelData.s2kScript, 's2k')}
+                onClick={() => handleCopy(modelData.s2kScript, 's2k')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 's2k' ? (
@@ -201,7 +242,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
               <span className="font-mono text-slate-300">TABLE: JOINT COORDINATES</span>
               <button
-                onClick={() => copyToClipboard(getJointsTSV(), 'joints')}
+                onClick={() => handleCopy(getJointsTSV(), 'joints')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 'joints' ? (
@@ -260,7 +301,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
               <span className="font-mono text-slate-300">TABLE: CONNECTIVITY - AREA</span>
               <button
-                onClick={() => copyToClipboard(getShellsTSV(), 'shells')}
+                onClick={() => handleCopy(getShellsTSV(), 'shells')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 'shells' ? (
@@ -320,7 +361,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
               <span className="font-mono text-slate-300">TABLE: AREA LOADS - UNIFORM</span>
               <button
-                onClick={() => copyToClipboard(getLoadsTSV(), 'loads')}
+                onClick={() => handleCopy(getLoadsTSV(), 'loads')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 'loads' ? (
@@ -367,7 +408,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
               <span className="font-mono text-slate-300">TABLE: JOINT SPRINGS (Winkler Yayları)</span>
               <button
-                onClick={() => copyToClipboard(getSpringsTSV(), 'springs')}
+                onClick={() => handleCopy(getSpringsTSV(), 'springs')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 'springs' ? (
@@ -421,7 +462,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
                 </span>
               </div>
               <button
-                onClick={() => copyToClipboard(getCombosTSV(), 'combos')}
+                onClick={() => handleCopy(getCombosTSV(), 'combos')}
                 className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors flex items-center gap-1"
               >
                 {copiedKey === 'combos' ? (
@@ -534,6 +575,10 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
                     <span className="text-emerald-400 font-bold">✓</span>
                     <span><strong>Windows CRLF:</strong> Tüm satır sonları Windows standart satır sonu (<code className="text-amber-300 font-mono">\r\n</code>) ile kodlanmıştır.</span>
                   </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-amber-400 font-bold">!</span>
+                    <span><strong>Model kapsamı:</strong> Kabuk elemanlar plakların <strong>orta yüzeylerinde</strong> konumlandırılmıştır (Joint Offset atanmamıştır) ve köşe ampatmanı (pah) FE modele alınmamıştır. Gerçek geometriye tam uyum için ilgili düğümlere Joint Offset atanmalıdır.</span>
+                  </li>
                 </ul>
               </div>
 
@@ -547,7 +592,7 @@ export const Sap2000ExporterView: React.FC<Sap2000ExporterViewProps> = ({
                 <ul className="list-disc list-inside space-y-1 mt-1 text-slate-300">
                   <li><strong className="text-white">Display → Show Forces/Stresses → Shells...</strong> menüsüne gidin.</li>
                   <li>Combo: <strong className="text-blue-400">ULS1_MAX_VERT</strong> (1.35G + 1.35H + 1.45Q) veya <strong className="text-blue-400">ULS_ENVELOPE</strong> seçin.</li>
-                  <li>Enine çekme momentleri için <strong className="text-white">M11</strong> bileşenini inceleyin. Açıklık ve köşe momentlerini yazılımımızın "Donatı & Tahkik" sekmesindeki tasarım momentleriyle birebir karşılaştırabilirsiniz.</li>
+                  <li>Enine çekme momentleri için <strong className="text-white">M11</strong> bileşenini inceleyin. Açıklık ve köşe momentlerini yazılımımızın "Donatı & Tahkik" sekmesindeki tasarım momentleriyle karşılaştırın. <strong className="text-amber-300">Birebir eşitlik beklenmez</strong>: uygulamadaki momentler tek geçişli yaklaşık çerçeve dağıtımıdır, FE modeli ise zemin yaylarını ve farklı yük dağılımını içerir. SAP2000 sonuçları esas alınmalıdır.</li>
                   <li>Taban plağı altındaki zemin gerilmeleri için <strong className="text-white">Joint Reactions → FZ</strong> değerini okuyarak q<sub>zemin</sub> emniyet sınırını kontrol edin.</li>
                 </ul>
               </div>

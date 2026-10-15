@@ -9,7 +9,7 @@ import {
   SoilAndMaterialParams,
   UIC71CalculatedLoads,
 } from '../types/culvert';
-import { Eye, Layers, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 interface Section2DViewerProps {
   geometry: CulvertGeometry;
@@ -184,20 +184,39 @@ export const Section2DViewer: React.FC<Section2DViewerProps> = ({
           {/* 1. Zemin Katmanı (Embankment Fill) */}
           <rect
             x={centerX - (totalWidthView / 2) * scale}
-            y={ballastTopY}
+            y={groundY}
             width={totalWidthView * scale}
-            height={(culvertBottomY - ballastTopY) + 40}
+            height={(culvertBottomY - groundY) + 40}
             fill="#1e293b"
             opacity="0.4"
           />
           <rect
             x={centerX - (totalWidthView / 2) * scale}
-            y={ballastTopY}
+            y={groundY}
             width={totalWidthView * scale}
-            height={(culvertBottomY - ballastTopY) + 40}
+            height={(culvertBottomY - groundY) + 40}
             fill="url(#soilPattern)"
             opacity="0.6"
           />
+          {/* Dolgu üst kotu çizgisi */}
+          <line
+            x1={centerX - (totalWidthView / 2) * scale}
+            y1={groundY}
+            x2={centerX + (totalWidthView / 2) * scale}
+            y2={groundY}
+            stroke="#475569"
+            strokeWidth="2"
+          />
+          <text
+            x={centerX + (totalWidthView / 2) * scale - 6}
+            y={groundY - 6}
+            textAnchor="end"
+            fill="#94a3b8"
+            fontSize="10"
+            className="font-mono"
+          >
+            Dolgu üst kotu
+          </text>
 
           {/* 2. Balast Tabakası */}
           {railway.fillHeight > 0 && (
@@ -565,11 +584,17 @@ export const Section2DViewer: React.FC<Section2DViewerProps> = ({
           <span>
             Sükunet Katsayısı K₀: <strong className="text-white font-mono">{loads.k0}</strong>
           </span>
+          <span>
+            Toplam Canlı Kuvvet:{' '}
+            <strong className="text-white font-mono">{loads.totalLiveForceKN.toFixed(0)} kN</strong>
+          </span>
         </div>
         <div className="flex items-center gap-2 text-slate-500 font-mono">
           <span>L = {geometry.totalLength.toFixed(1)}m</span>
           <span>·</span>
           <span>Dış Ebat: {bExt.toFixed(2)}m × {hExt.toFixed(2)}m</span>
+          <span>·</span>
+          <span>q_zemin = {loads.estimatedSoilBearingPressure.toFixed(0)} kPa</span>
         </div>
       </div>
     </div>

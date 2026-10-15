@@ -75,6 +75,13 @@ export const CalculationReportModal: React.FC<CalculationReportModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={onDownloadS2K}
+              className="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">.s2k Model</span>
+            </button>
+            <button
               onClick={handlePrint}
               className="px-3.5 py-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors flex items-center gap-1.5 shadow-sm"
             >
@@ -249,6 +256,66 @@ export const CalculationReportModal: React.FC<CalculationReportModalProps> = ({
                   <strong className="text-slate-900">{loads.sigmaSoilBottom.toFixed(2)} kN/m²</strong>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-2 font-mono pt-2 border-t border-slate-200">
+                <div>
+                  <span className="text-slate-500 block">Yayılma Alanı (B<sub>eff</sub> × L<sub>eff</sub>):</span>
+                  <strong className="text-slate-900">
+                    {loads.effectiveWidth.toFixed(2)} × {loads.effectiveLength.toFixed(2)} m
+                    {loads.isOverlapping ? ' (çift hat girişimli)' : ''}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Toplam Canlı Kuvvet (Φ<sub>red</sub> sonrası):</span>
+                  <strong className="text-slate-900">
+                    {loads.totalLiveForceKN.toFixed(0)} kN ({loads.numTracks} hat)
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Menfez Boyunca Canlı Çizgi Yük:</span>
+                  <strong className="text-slate-900">{loads.lineLiveLoadKNpm.toFixed(1)} kN/m</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Taban Zemin Emniyet Gerilmesi (SLS):</span>
+                  <strong className="text-slate-900">
+                    {loads.estimatedSoilBearingPressure.toFixed(1)} kPa
+                  </strong>
+                </div>
+                {loads.netUpliftPressure > 0 && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500 block">Tabandaki Net Kaldırma Basıncı:</span>
+                    <strong className="text-red-700">
+                      {loads.netUpliftPressure.toFixed(2)} kN/m² (iç su − dış su)
+                    </strong>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 3b. Hesap Özeti */}
+          <div className="bg-slate-50 p-3 rounded border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-[11px]">
+            <div>
+              <span className="text-slate-500 block">M<sub>d,max</sub> (kNm/m)</span>
+              <strong className="text-slate-900 text-sm">{summary.maxMomentKnm.toFixed(1)}</strong>
+            </div>
+            <div>
+              <span className="text-slate-500 block">V<sub>d,max</sub> (kN/m)</span>
+              <strong className="text-slate-900 text-sm">{summary.maxShearKn.toFixed(1)}</strong>
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <span className="text-slate-500 block">Belirleyici Kesit</span>
+              <strong className="text-slate-900 text-xs">{summary.governingSection}</strong>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Genel Tahkik</span>
+              <strong
+                className={`text-sm ${
+                  summary.allPassed ? 'text-emerald-700' : 'text-amber-700'
+                }`}
+              >
+                {summary.allPassed ? 'UYGUN' : 'KONTROL GEREKLİ'}
+              </strong>
             </div>
           </div>
 
@@ -281,7 +348,13 @@ export const CalculationReportModal: React.FC<CalculationReportModalProps> = ({
                     <td className="p-1.5 text-blue-700 font-bold">{sec.providedAs.toFixed(2)}</td>
                     <td className="p-1.5">{sec.crackWidth.toFixed(2)} mm</td>
                     <td className="p-1.5">
-                      <span className="font-bold text-emerald-700">UYGUN</span>
+                      {sec.status === 'OK' ? (
+                        <span className="font-bold text-emerald-700">UYGUN</span>
+                      ) : sec.status === 'ETRIYE_GEREKLI' ? (
+                        <span className="font-bold text-red-700">ETRİYE GEREKLİ</span>
+                      ) : (
+                        <span className="font-bold text-amber-700">ÇATLAK KONTROLÜ</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -330,21 +403,65 @@ export const CalculationReportModal: React.FC<CalculationReportModalProps> = ({
             </table>
           </div>
 
-          {/* 6. Sign-off Blocks */}
+          {/* 6. Hesap Yöntemi ve Kapsam Sınırları */}
+          <div className="space-y-1.5">
+            <h3 className="font-bold text-xs uppercase tracking-wide text-slate-900 border-b border-slate-200 pb-1">
+              6. Hesap Yöntemi ve Kapsam Sınırları
+            </h3>
+            <ul className="list-disc list-inside space-y-0.5 text-slate-700 text-[11px]">
+              <li>
+                Yükler <strong>UIC 776-1 / EN 1991-2</strong> dinamik katsayı formülüyle
+                (φ = 1.44/L<sub>φ</sub><sup>0.2</sup> + 0.82) hesaplanmıştır; dolgu derinliği
+                indirgemesi uygulanmıştır.
+              </li>
+              <li>
+                Canlı yük kuvveti dolgu içinde enine ve boyuna yayıldıktan sonra{' '}
+                <strong>menfez üst plak genişliği boyunca</strong> toplanarak basınca
+                dönüştürülmüştür; böylece menfeze aktarılan toplam kuvvet korunmuştur.
+              </li>
+              <li>
+                Kesit tesirleri <strong>tek geçişli yaklaşık çerçeve moment dağılımı</strong> ile
+                bulunmuştur (iteratif moment dağılımı değildir). Kesin sonuçlar için
+                <strong> SAP2000 kabuk (shell) sonlu eleman modeli</strong> esas alınmalıdır.
+              </li>
+              <li>
+                Donatı seçimi eğilme (A<sub>s,req</sub>) ve çatlak genişliği
+                (w<sub>k</sub> ≤ 0.20 mm) şartlarını birlikte sağlayan en ekonomik çözümü
+                arar; metraj bu çap ve aralıkları kullanır.
+              </li>
+              <li>
+                SAP2000 modeli kabuk elemanları plakların <strong>orta yüzeylerinde</strong>{' '}
+                konumlandırır; köşe ampatmanı (pah) FE modele alınmaz. Gerçek geometri için
+                SAP2000'te düğümlere Joint Offset atanmalıdır.
+              </li>
+              <li>
+                Zemin etkisi Winkler yayları ile temsil edilmiş (k<sub>s</sub>); zemin–yapı
+                etkileşimi yaklaşıktır.
+              </li>
+              <li>
+                Bu rapor <strong>ön boyutlandırma amaçlıdır</strong>; imza altına basılan resmî
+                bir proje dosyası değildir.
+              </li>
+            </ul>
+          </div>
+
+          {/* 7. Sign-off Blocks */}
           <div className="pt-6 border-t-2 border-slate-900 grid grid-cols-3 gap-6 text-center text-[11px] break-inside-avoid">
             <div className="space-y-10">
               <span className="font-semibold text-slate-700 block">Hesaplayan Mühendis</span>
-              <div className="font-bold text-slate-900">{designer}</div>
+              <div className="font-bold text-slate-900">
+                {designer.trim() ? designer : ' '}
+              </div>
               <span className="text-slate-400 text-[10px] block">İmza / Kaşe</span>
             </div>
             <div className="space-y-10">
               <span className="font-semibold text-slate-700 block">Kontrol Mühendisi</span>
-              <div className="font-bold text-slate-900">İnşaat Yüksek Mühendisi</div>
+              <div className="font-bold text-slate-900"> </div>
               <span className="text-slate-400 text-[10px] block">İmza / Kaşe</span>
             </div>
             <div className="space-y-10">
               <span className="font-semibold text-slate-700 block">TCDD Proje Onayı</span>
-              <div className="font-bold text-slate-900">Demiryolu Yapım Dairesi</div>
+              <div className="font-bold text-slate-900"> </div>
               <span className="text-slate-400 text-[10px] block">Mühür / Onay</span>
             </div>
           </div>

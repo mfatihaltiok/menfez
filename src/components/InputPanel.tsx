@@ -10,9 +10,8 @@ import {
   UnitCostParams,
   ConcreteGrade,
   SteelGrade,
-  TrackType,
 } from '../types/culvert';
-import { Box, Train, Mountain, Grid, DollarSign, ChevronRight } from 'lucide-react';
+import { Box, Train, Mountain, Grid, DollarSign } from 'lucide-react';
 
 interface InputPanelProps {
   projectName: string;
@@ -49,8 +48,19 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'geo' | 'rail' | 'soil' | 'mesh' | 'cost'>('geo');
 
+  /**
+   * Sayı girişi yardımcısı.
+   * "parseFloat(x) || varsayilan" deseni 0 değerini ve "0.5" gibi kısmi
+   * girişleri bozuyordu (0 yazıldığında alan anında varsayılana dönüyordu).
+   */
+  const num = (raw: string, fallback: number): number => {
+    if (raw.trim() === '') return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
   return (
-    <aside className="w-80 md:w-88 lg:w-96 bg-white border-r border-slate-200 flex flex-col shrink-0 h-[calc(100vh-57px)] overflow-hidden">
+    <aside className="w-full h-full bg-white border-r border-slate-200 flex flex-col overflow-hidden">
       {/* Tab Header Controls */}
       <div className="flex border-b border-slate-200 bg-slate-50/80 p-1 gap-1 shrink-0 overflow-x-auto">
         <button
@@ -139,6 +149,16 @@ export const InputPanel: React.FC<InputPanelProps> = ({
             className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
           />
         </div>
+        <div className="col-span-2">
+          <label className="text-[10px] uppercase font-semibold text-slate-500 block">Proje Müellifi / Kontrol</label>
+          <input
+            type="text"
+            placeholder="Ad Soyad — unvan"
+            value={designer}
+            onChange={(e) => onUpdateProject({ designer: e.target.value })}
+            className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-slate-800 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          />
+        </div>
       </div>
 
       {/* Tab Contents - Scrollable Form */}
@@ -161,7 +181,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   min="1.0"
                   max="12.0"
                   value={geometry.clearSpan}
-                  onChange={(e) => onUpdateGeometry({ clearSpan: parseFloat(e.target.value) || 1.0 })}
+                  onChange={(e) => onUpdateGeometry({ clearSpan: num(e.target.value, 1.0) })}
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
@@ -176,7 +196,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   min="1.0"
                   max="8.0"
                   value={geometry.clearHeight}
-                  onChange={(e) => onUpdateGeometry({ clearHeight: parseFloat(e.target.value) || 1.0 })}
+                  onChange={(e) => onUpdateGeometry({ clearHeight: num(e.target.value, 1.0) })}
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
@@ -192,7 +212,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 min="4.0"
                 max="80.0"
                 value={geometry.totalLength}
-                onChange={(e) => onUpdateGeometry({ totalLength: parseFloat(e.target.value) || 5.0 })}
+                onChange={(e) => onUpdateGeometry({ totalLength: num(e.target.value, 5.0) })}
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
             </div>
@@ -213,7 +233,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.50"
                   value={geometry.topSlabThickness}
                   onChange={(e) =>
-                    onUpdateGeometry({ topSlabThickness: parseFloat(e.target.value) || 0.4 })
+                    onUpdateGeometry({ topSlabThickness: num(e.target.value, 0.4) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -230,7 +250,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.50"
                   value={geometry.bottomSlabThickness}
                   onChange={(e) =>
-                    onUpdateGeometry({ bottomSlabThickness: parseFloat(e.target.value) || 0.45 })
+                    onUpdateGeometry({ bottomSlabThickness: num(e.target.value, 0.45) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -247,7 +267,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.50"
                   value={geometry.sideWallThickness}
                   onChange={(e) =>
-                    onUpdateGeometry({ sideWallThickness: parseFloat(e.target.value) || 0.4 })
+                    onUpdateGeometry({ sideWallThickness: num(e.target.value, 0.4) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -271,7 +291,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.0"
                   value={geometry.haunchWidth}
                   onChange={(e) =>
-                    onUpdateGeometry({ haunchWidth: parseFloat(e.target.value) || 0.0 })
+                    onUpdateGeometry({ haunchWidth: num(e.target.value, 0.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -288,7 +308,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.0"
                   value={geometry.haunchHeight}
                   onChange={(e) =>
-                    onUpdateGeometry({ haunchHeight: parseFloat(e.target.value) || 0.0 })
+                    onUpdateGeometry({ haunchHeight: num(e.target.value, 0.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -344,7 +364,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="6.0"
                   value={railway.trackSpacing}
                   onChange={(e) =>
-                    onUpdateRailway({ trackSpacing: parseFloat(e.target.value) || 4.2 })
+                    onUpdateRailway({ trackSpacing: num(e.target.value, 4.2) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -363,7 +383,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="20.0"
                   value={railway.fillHeight}
                   onChange={(e) =>
-                    onUpdateRailway({ fillHeight: parseFloat(e.target.value) || 1.0 })
+                    onUpdateRailway({ fillHeight: num(e.target.value, 1.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -381,7 +401,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="1.0"
                   value={railway.ballastThickness}
                   onChange={(e) =>
-                    onUpdateRailway({ ballastThickness: parseFloat(e.target.value) || 0.5 })
+                    onUpdateRailway({ ballastThickness: num(e.target.value, 0.5) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -401,7 +421,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="350"
                   value={railway.trainSpeed}
                   onChange={(e) =>
-                    onUpdateRailway({ trainSpeed: parseFloat(e.target.value) || 160 })
+                    onUpdateRailway({ trainSpeed: num(e.target.value, 160) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -414,7 +434,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 <select
                   value={railway.alphaFactor}
                   onChange={(e) =>
-                    onUpdateRailway({ alphaFactor: parseFloat(e.target.value) || 1.0 })
+                    onUpdateRailway({ alphaFactor: num(e.target.value, 1.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none bg-white"
                 >
@@ -432,7 +452,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
               <select
                 value={railway.dispersionSlope}
                 onChange={(e) =>
-                  onUpdateRailway({ dispersionSlope: parseFloat(e.target.value) || 1.0 })
+                  onUpdateRailway({ dispersionSlope: num(e.target.value, 1.0) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none bg-white"
               >
@@ -462,7 +482,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="24.0"
                   value={soil.soilUnitWeight}
                   onChange={(e) =>
-                    onUpdateSoil({ soilUnitWeight: parseFloat(e.target.value) || 20.0 })
+                    onUpdateSoil({ soilUnitWeight: num(e.target.value, 20.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -479,7 +499,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="45"
                   value={soil.frictionAngle}
                   onChange={(e) =>
-                    onUpdateSoil({ frictionAngle: parseFloat(e.target.value) || 30 })
+                    onUpdateSoil({ frictionAngle: num(e.target.value, 30) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -497,7 +517,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 max="200000"
                 value={soil.subgradeReactionModulus}
                 onChange={(e) =>
-                  onUpdateSoil({ subgradeReactionModulus: parseFloat(e.target.value) || 40000 })
+                  onUpdateSoil({ subgradeReactionModulus: num(e.target.value, 40000) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
@@ -516,7 +536,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="10.0"
                   value={soil.waterTableHeight}
                   onChange={(e) =>
-                    onUpdateSoil({ waterTableHeight: parseFloat(e.target.value) || 0.0 })
+                    onUpdateSoil({ waterTableHeight: num(e.target.value, 0.0) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -534,10 +554,37 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   max="80"
                   value={soil.concreteCover}
                   onChange={(e) =>
-                    onUpdateSoil({ concreteCover: parseFloat(e.target.value) || 50 })
+                    onUpdateSoil({ concreteCover: num(e.target.value, 50) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="font-medium text-slate-700 block mb-1">
+                  Menfez İçi Su Yüksekliği <span className="text-slate-400 font-mono">[m]</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.0"
+                  max="10.0"
+                  value={soil.internalWaterDepth}
+                  onChange={(e) =>
+                    onUpdateSoil({ internalWaterDepth: num(e.target.value, 0.0) })
+                  }
+                  className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                />
+                <span className="text-[10px] text-slate-500">Tabandan itibaren (kaldırma hesabı)</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-500 block leading-relaxed">
+                  Dış su basıncı yeraltı su seviyesinden, iç su basıncı bu değerden
+                  hesaplanır. Tabandaki net kaldırma basıncı ikisinin farkıdır ve
+                  hem duvar hem taban yüklerine uygulanır.
+                </span>
               </div>
             </div>
 
@@ -627,7 +674,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 step="100"
                 value={unitCosts.concretePrice}
                 onChange={(e) =>
-                  onUpdateCosts({ concretePrice: parseFloat(e.target.value) || 2800 })
+                  onUpdateCosts({ concretePrice: num(e.target.value, 2800) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
@@ -642,7 +689,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 step="1000"
                 value={unitCosts.rebarPrice}
                 onChange={(e) =>
-                  onUpdateCosts({ rebarPrice: parseFloat(e.target.value) || 32000 })
+                  onUpdateCosts({ rebarPrice: num(e.target.value, 32000) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
@@ -657,7 +704,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 step="50"
                 value={unitCosts.formworkPrice}
                 onChange={(e) =>
-                  onUpdateCosts({ formworkPrice: parseFloat(e.target.value) || 650 })
+                  onUpdateCosts({ formworkPrice: num(e.target.value, 650) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
@@ -673,7 +720,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   step="20"
                   value={unitCosts.excavationPrice}
                   onChange={(e) =>
-                    onUpdateCosts({ excavationPrice: parseFloat(e.target.value) || 180 })
+                    onUpdateCosts({ excavationPrice: num(e.target.value, 180) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -688,7 +735,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   step="20"
                   value={unitCosts.backfillPrice}
                   onChange={(e) =>
-                    onUpdateCosts({ backfillPrice: parseFloat(e.target.value) || 240 })
+                    onUpdateCosts({ backfillPrice: num(e.target.value, 240) })
                   }
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
@@ -704,7 +751,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 step="50"
                 value={unitCosts.waterproofingPrice}
                 onChange={(e) =>
-                  onUpdateCosts({ waterproofingPrice: parseFloat(e.target.value) || 450 })
+                  onUpdateCosts({ waterproofingPrice: num(e.target.value, 450) })
                 }
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />

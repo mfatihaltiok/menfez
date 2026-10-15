@@ -5,7 +5,6 @@
 export type TrackType = 'single' | 'double';
 export type ConcreteGrade = 'C25/30' | 'C30/37' | 'C35/45' | 'C40/50';
 export type SteelGrade = 'B420C' | 'B500C';
-export type TrackStandard = 'UIC71' | 'SW0' | 'SW2';
 
 export interface CulvertGeometry {
   clearSpan: number; // Bi: İç açıklık (m)
@@ -21,14 +20,13 @@ export interface CulvertGeometry {
 export interface RailwayLoadingParams {
   trackType: TrackType; // Tek veya Çift Hat
   trackSpacing: number; // Çift hat eksen mesafesi (m)
-  fillHeight: number; // Hf: Balast üstünden menfez üst plağına kadar toplam dolgu yüksekliği (m)
+  fillHeight: number; // Hf: Menfez üst plak üst kotundan balast üst kotuna kadar toplam örtü yüksekliği (m)
   ballastThickness: number; // hb: Balast tabakası kalınlığı (m, min 0.50m TCDD)
   trainSpeed: number; // V: Hat hızı (km/h)
   alphaFactor: number; // alpha: UIC sınıflandırma katsayısı (default 1.00)
-  trackStandard: TrackStandard;
   dispersionSlope: number; // Dolguda yük yayılma eğimi (1 = 1:1 / 45°, 0.5 = 2:1 / 1:2)
   sleeperLength: number; // Travers boyu (m, standart 2.60m)
-  longitudinalAxleSpacing: number; // Dingil aralığı (standart 1.60m)
+  longitudinalAxleSpacing: number; // Dingil aralığı (standart 1.60m) — UIC 71 çekirdek uzunluğunu belirler
 }
 
 export interface SoilAndMaterialParams {
@@ -38,7 +36,7 @@ export interface SoilAndMaterialParams {
   frictionAngle: number; // phi: İçsel sürtünme açısı (derece)
   subgradeReactionModulus: number; // ks: Zemin yatak katsayısı (kN/m³)
   waterTableHeight: number; // Yeraltı su seviyesi (menfez tabanından, m)
-  internalWaterDepth: number; // Menfez içi su yüksekliği (m)
+  internalWaterDepth: number; // Menfez içi su yüksekliği (menfez tabanından, m)
   concreteGrade: ConcreteGrade;
   steelGrade: SteelGrade;
   concreteCover: number; // Paspayı c (mm, zemin temasında min 50mm)
@@ -74,9 +72,13 @@ export interface UIC71CalculatedLoads {
   // Yük dağılımı
   effectiveWidth: number; // Enine yayılma genişliği B_eff (m)
   effectiveLength: number; // Boyuna yayılma uzunluğu L_eff (m)
-  isOverlapping: boolean; // Çift hat veya dingiller arası girişim var mı
+  isOverlapping: boolean; // Çift hatta yayılma bölgeleri girişiyor mu
+  // Canlı yük kuvvet dengesi
+  numTracks: number; // Dikkate alınan hat adedi
+  totalLiveForceKN: number; // Dinamik katsayılı toplam canlı kuvvet (kN)
+  lineLiveLoadKNpm: number; // Menfez boyunca düşen canlı çizgi yük (kN/m)
   // Üst plak üzerindeki düşey basınçlar (kN/m²)
-  qVerticalLiveMax: number; // UIC 71 dingillerinden gelen dinamik düşey basınç
+  qVerticalLiveMax: number; // UIC 71 dingillerinden gelen dinamik düşey basınç (üst plak üzerinde)
   qVerticalLiveSurcharge: number; // Katar yayılı yükünden gelen düşey basınç
   qVerticalSoil: number; // Dolgu ve balasttan gelen düşey toprak basıncı
   qVerticalDeadSlab: number; // Üst plak öz ağırlığı
@@ -86,9 +88,15 @@ export interface UIC71CalculatedLoads {
   sigmaSoilTop: number; // Menfez tavan kotunda yanal toprak basıncı
   sigmaSoilBottom: number; // Menfez taban kotunda yanal toprak basıncı
   sigmaLiveSurcharge: number; // Demiryolu sürşarjından gelen yanal basınç
-  // Taban gerilmesi ve su basınçları
-  sigmaHydroBottom: number;
-  estimatedSoilBearingPressure: number; // Taban ortalama zemin emniyet gerilmesi kontrolü
+  // Hidrostatik su basınçları (kN/m²)
+  sigmaHydroBottom: number; // Dış (zemin) su basıncı, tabanda
+  sigmaHydroTop: number; // Dış (zemin) su basıncı, üst plak altında
+  sigmaHydroInternalBottom: number; // İç su basıncı, tabanda
+  sigmaHydroInternalTop: number; // İç su basıncı, üst plak altında
+  netUpliftPressure: number; // Tabanda net kaldırma basıncı (iç su - dış su)
+  // Taban gerilmesi
+  estimatedSoilBearingPressure: number; // Taban ortalama zemin taşıma gerilmesi (kPa)
+  totalVerticalLoadPerMeter: number; // SLS toplam düşey yük (kN/m)
 }
 
 export interface SAPJoint {
@@ -117,7 +125,7 @@ export interface SAPJointSpring {
 export interface SAPAreaLoad {
   shellId: number;
   loadPattern: string;
-  direction: 'Gravity' | 'Local-3' | 'Global-Z' | 'Global-X' | 'X' | 'Z';
+  direction: 'Gravity' | 'Local-3' | 'Global-Z' | 'Global-X' | 'X' | 'Y' | 'Z';
   value: number; // kN/m²
 }
 
@@ -158,6 +166,8 @@ export interface SectionRebarDesign {
   shearStatus: 'OK' | 'ETRIYE_GEREKLI';
   crackWidth: number; // wk (mm)
   crackStatus: 'OK' | 'UYARI';
+  crackGoverned: boolean; // Donatı seçimi çatlak sınırı tarafından mı belirlendi
+  status: 'OK' | 'UYARI' | 'ETRIYE_GEREKLI'; // Kesitin genel durumu
 }
 
 export interface RebarScheduleItem {

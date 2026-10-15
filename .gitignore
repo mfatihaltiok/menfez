@@ -1,0 +1,22 @@
+# Bağımlılıklar
+node_modules/
+
+# Derleme çıktıları
+dist/
+build/
+*.tsbuildinfo
+
+# Ortam değişkenleri
+.env
+.env.local
+.env.*.local
+
+# Editör / işletim sistemi
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Yerel günlükler
+*.log
+npm-debug.log*

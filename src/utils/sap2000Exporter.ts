@@ -1,11 +1,21 @@
 /**
  * SAP2000 Shell Finite Element Mesh Generator & .s2k Script Exporter
  * Generates Joints, Shell Connectivity, Winkler Springs, Area Loads, and Combinations
+ *
+ * MODEL GEOMETRİSİ HAKKINDA NOT
+ * -----------------------------
+ * Kabuk elemanlar plakların ORTA YÜZEYLERİNDE konumlandırılır (SAP2000'te
+ * "Joint Offset" uygulanmadığı için). Bu nedenle:
+ *   - üst plak orta yüzeyi  : z = tb + Hi + tt/2
+ *   - alt plak orta yüzeyi  : z = tb/2
+ *   - duvar yüksekliği      : Hi + (tt + tb)/2  (akslar arası, çerçeve analizi için doğru)
+ * Gerçek geometriye tam uyum için SAP2000'te ilgili düğümlere Joint Offset
+ * atanmalıdır. Köşe ampatmanı (pah) FE modele alınmaz; yalnızca metraj ve
+ * kesit çiziminde dikkate alınır.
  */
 
 import {
   CulvertGeometry,
-  RailwayLoadingParams,
   SoilAndMaterialParams,
   UIC71CalculatedLoads,
   SAPJoint,
@@ -18,7 +28,6 @@ import {
 
 export function generateSAP2000Model(
   geo: CulvertGeometry,
-  rail: RailwayLoadingParams,
   soil: SoilAndMaterialParams,
   calculatedLoads: UIC71CalculatedLoads,
   meshTargetSize: number = 0.50
@@ -27,15 +36,18 @@ export function generateSAP2000Model(
   const hCenter = geo.clearHeight + (geo.topSlabThickness + geo.bottomSlabThickness) / 2;
   const culvertLength = geo.totalLength;
 
+  // Mesh boyutunda sıfır/NaN koruması (bölme hatası ve sonsuz döngü önlemi)
+  const meshSize = Number.isFinite(meshTargetSize) && meshTargetSize > 0.01 ? meshTargetSize : 0.5;
+
   const xMin = -bCenter / 2;
   const xMax = bCenter / 2;
   const zMin = 0;
   const zMax = hCenter;
 
   // Bölüntü sayıları
-  const nx = Math.max(Math.round(bCenter / meshTargetSize), 4);
-  const nz = Math.max(Math.round(hCenter / meshTargetSize), 3);
-  const ny = Math.max(Math.round(culvertLength / meshTargetSize), 4);
+  const nx = Math.max(Math.round(bCenter / meshSize), 4);
+  const nz = Math.max(Math.round(hCenter / meshSize), 3);
+  const ny = Math.max(Math.round(culvertLength / meshSize), 4);
 
   const dx = bCenter / nx;
   const dz = hCenter / nz;
@@ -44,21 +56,25 @@ export function generateSAP2000Model(
   // Düğüm koordinatları
   const joints: SAPJoint[] = [];
   const jointMap = new Map<string, number>();
+  const jointById = new Map<number, SAPJoint>();
 
   function getOrAddJoint(x: number, y: number, z: number, isBottom: boolean = false): number {
     const key = `${x.toFixed(3)}_${y.toFixed(3)}_${z.toFixed(3)}`;
-    if (jointMap.has(key)) {
-      return jointMap.get(key)!;
+    const existing = jointMap.get(key);
+    if (existing !== undefined) {
+      return existing;
     }
     const newId = joints.length + 1;
-    joints.push({
+    const joint: SAPJoint = {
       id: newId,
       x: Number(x.toFixed(3)),
       y: Number(y.toFixed(3)),
       z: Number(z.toFixed(3)),
       isBottom,
       tributaryArea: 0,
-    });
+    };
+    joints.push(joint);
+    jointById.set(newId, joint);
     jointMap.set(key, newId);
     return newId;
   }
@@ -163,14 +179,13 @@ export function generateSAP2000Model(
   }
 
   // 5. Taban Düğümlerinde Winkler Zemin Yayları (ks * Tributary Area)
-  // Her taban düğümünün etkili zemin alanını hesapla
   for (const shell of shells) {
     if (shell.part === 'bottom') {
       const quarterArea = shell.area / 4;
       for (const jId of shell.jointIds) {
-        const j = joints.find((item) => item.id === jId);
-        if (j) {
-          j.tributaryArea += quarterArea;
+        const joint = jointById.get(jId);
+        if (joint) {
+          joint.tributaryArea += quarterArea;
         }
       }
     }
@@ -190,6 +205,10 @@ export function generateSAP2000Model(
   // 6. Kabuk Yüzey Yükleri (Area Loads)
   const loads: SAPAreaLoad[] = [];
 
+  // Yanal basınç dağılımında üstten derinliğe göre oran (0 = üst, 1 = taban)
+  const depthRatioOf = (centerZ: number) =>
+    Math.max(0, Math.min((zMax - centerZ) / hCenter, 1.0));
+
   for (const shell of shells) {
     if (shell.part === 'top') {
       // Üst plak: Düşey Zemin ve UIC 71 Canlı Yük
@@ -205,10 +224,12 @@ export function generateSAP2000Model(
         direction: 'Gravity',
         value: calculatedLoads.qVerticalLiveMax,
       });
-    } else if (shell.part === 'left') {
-      // Sol yan duvar: İçeri doğru (+X yönü) derinlikle artan zemin ve sürşarj itkisi
-      const depthFromTop = zMax - shell.centerZ;
-      const depthRatio = Math.max(0, Math.min(depthFromTop / hCenter, 1.0));
+    } else if (shell.part === 'left' || shell.part === 'right') {
+      // Sol duvar: içeri (+X) itki ; Sağ duvar: içeri (-X) itki
+      const sign = shell.part === 'left' ? 1 : -1;
+      const depthRatio = depthRatioOf(shell.centerZ);
+
+      // Toprak basıncı (derinlikle artan)
       const soilPressure = Number(
         (
           calculatedLoads.sigmaSoilTop +
@@ -220,42 +241,65 @@ export function generateSAP2000Model(
         shellId: shell.id,
         loadPattern: 'SOIL_LAT',
         direction: 'X',
-        value: soilPressure,
+        value: Number((soilPressure * sign).toFixed(2)),
       });
       loads.push({
         shellId: shell.id,
         loadPattern: 'UIC71_LAT',
         direction: 'X',
-        value: calculatedLoads.sigmaLiveSurcharge,
+        value: Number((calculatedLoads.sigmaLiveSurcharge * sign).toFixed(2)),
       });
-    } else if (shell.part === 'right') {
-      // Sağ yan duvar: İçeri doğru (-X yönü) derinlikle artan zemin ve sürşarj itkisi
-      const depthFromTop = zMax - shell.centerZ;
-      const depthRatio = Math.max(0, Math.min(depthFromTop / hCenter, 1.0));
-      const soilPressure = Number(
+
+      // Hidrostatik su basıncı: dış (zemin) su içeri, iç su dışarı iter
+      const extWater = Number(
         (
-          calculatedLoads.sigmaSoilTop +
-          depthRatio * (calculatedLoads.sigmaSoilBottom - calculatedLoads.sigmaSoilTop)
+          calculatedLoads.sigmaHydroTop +
+          depthRatio * (calculatedLoads.sigmaHydroBottom - calculatedLoads.sigmaHydroTop)
+        ).toFixed(2)
+      );
+      const intWater = Number(
+        (
+          calculatedLoads.sigmaHydroInternalTop +
+          depthRatio *
+            (calculatedLoads.sigmaHydroInternalBottom - calculatedLoads.sigmaHydroInternalTop)
         ).toFixed(2)
       );
 
       loads.push({
         shellId: shell.id,
-        loadPattern: 'SOIL_LAT',
+        loadPattern: 'HYDRO_EXT',
         direction: 'X',
-        value: -soilPressure,
+        value: Number((extWater * sign).toFixed(2)),
       });
       loads.push({
         shellId: shell.id,
-        loadPattern: 'UIC71_LAT',
+        loadPattern: 'HYDRO_INT',
         direction: 'X',
-        value: -calculatedLoads.sigmaLiveSurcharge,
+        value: Number((-intWater * sign).toFixed(2)),
       });
+    } else if (shell.part === 'bottom') {
+      // Taban kaldırması (iç su - dış su) → yukarı yönlü düşey basınç
+      if (calculatedLoads.netUpliftPressure > 0) {
+        loads.push({
+          shellId: shell.id,
+          loadPattern: 'HYDRO_EXT',
+          direction: 'Z',
+          value: calculatedLoads.netUpliftPressure,
+        });
+      }
     }
   }
 
   // 7. Yük Kombinasyonları (TCDD / TS 500 / EN 1990 ULS ve SLS Kombinasyonları)
-  const loadPatterns = ['DEAD', 'SOIL_VERT', 'SOIL_LAT', 'UIC71_VERT', 'UIC71_LAT'];
+  const loadPatterns = [
+    'DEAD',
+    'SOIL_VERT',
+    'SOIL_LAT',
+    'UIC71_VERT',
+    'UIC71_LAT',
+    'HYDRO_EXT',
+    'HYDRO_INT',
+  ];
   const combinations: SAPLoadCombination[] = [
     {
       name: 'ULS1_MAX_VERT',
@@ -267,6 +311,8 @@ export function generateSAP2000Model(
         SOIL_LAT: 1.35,
         UIC71_VERT: 1.45,
         UIC71_LAT: 1.45,
+        HYDRO_EXT: 1.0,
+        HYDRO_INT: 1.0,
       },
     },
     {
@@ -279,6 +325,8 @@ export function generateSAP2000Model(
         SOIL_LAT: 1.35,
         UIC71_VERT: 0.0,
         UIC71_LAT: 1.45,
+        HYDRO_EXT: 1.0,
+        HYDRO_INT: 1.0,
       },
     },
     {
@@ -291,6 +339,8 @@ export function generateSAP2000Model(
         SOIL_LAT: 1.35,
         UIC71_VERT: 0.0,
         UIC71_LAT: 0.0,
+        HYDRO_EXT: 1.0,
+        HYDRO_INT: 1.0,
       },
     },
     {
@@ -303,6 +353,8 @@ export function generateSAP2000Model(
         SOIL_LAT: 1.0,
         UIC71_VERT: 1.0,
         UIC71_LAT: 1.0,
+        HYDRO_EXT: 1.0,
+        HYDRO_INT: 1.0,
       },
     },
     {
@@ -315,6 +367,8 @@ export function generateSAP2000Model(
         SOIL_LAT: 1.0,
         UIC71_VERT: 0.5,
         UIC71_LAT: 0.5,
+        HYDRO_EXT: 1.0,
+        HYDRO_INT: 1.0,
       },
     },
     {
@@ -406,7 +460,7 @@ function generateS2KScriptContent(
   }
   lines.push('');
 
-  // 7. Kabuk Eleman Bağlantıları (NumJoints=4 ve Joint1..Joint4 - Section bu tabloda DEĞİL, AREA SECTION ASSIGNMENTS tablosundadır)
+  // 7. Kabuk Eleman Bağlantıları
   lines.push('TABLE:  "CONNECTIVITY - AREA"');
   for (const s of shells) {
     lines.push(
@@ -415,7 +469,7 @@ function generateS2KScriptContent(
   }
   lines.push('');
 
-  // 8. Kabuk Eleman Kesit Atamaları (200 uyarının ana sebebi bu tablonun eksik olmasıdır)
+  // 8. Kabuk Eleman Kesit Atamaları
   lines.push('TABLE:  "AREA SECTION ASSIGNMENTS"');
   for (const s of shells) {
     lines.push(`   Area=${s.id}   Section="${s.section}"`);
@@ -427,7 +481,7 @@ function generateS2KScriptContent(
   lines.push('   Joint=1   U1=Yes   U2=Yes   U3=No   R1=No   R2=No   R3=No');
   lines.push('');
 
-  // 10. Zemin Winkler Yayları (Doğru tablo adı: JOINT SPRING ASSIGNMENTS 1 - UNCOUPLED)
+  // 10. Zemin Winkler Yayları
   lines.push('TABLE:  "JOINT SPRING ASSIGNMENTS 1 - UNCOUPLED"');
   for (const sp of springs) {
     lines.push(
@@ -443,27 +497,25 @@ function generateS2KScriptContent(
   lines.push('   LoadPat=SOIL_LAT    DesignType=Other   SelfWtMult=0');
   lines.push('   LoadPat=UIC71_VERT  DesignType=Live    SelfWtMult=0');
   lines.push('   LoadPat=UIC71_LAT   DesignType=Live    SelfWtMult=0');
+  lines.push('   LoadPat=HYDRO_EXT   DesignType=Other   SelfWtMult=0');
+  lines.push('   LoadPat=HYDRO_INT   DesignType=Other   SelfWtMult=0');
   lines.push('');
 
-  // 12. Yük Durumu (Load Case) Tanımları (Kombinasyonların SAP2000'de hata vermemesi için zorunludur)
+  // 12. Yük Durumu (Load Case) Tanımları
   lines.push('TABLE:  "LOAD CASE DEFINITIONS"');
-  lines.push('   Case=DEAD   Type="Linear Static"   InitialCond="Zero"');
-  lines.push('   Case=SOIL_VERT   Type="Linear Static"   InitialCond="Zero"');
-  lines.push('   Case=SOIL_LAT   Type="Linear Static"   InitialCond="Zero"');
-  lines.push('   Case=UIC71_VERT   Type="Linear Static"   InitialCond="Zero"');
-  lines.push('   Case=UIC71_LAT   Type="Linear Static"   InitialCond="Zero"');
+  for (const pat of loadPatterns) {
+    lines.push(`   Case=${pat}   Type="Linear Static"   InitialCond="Zero"`);
+  }
   lines.push('');
 
-  // 13. Yük Durumu - Statik Yük Atamaları (Paternleri Durumlara Eşleme)
+  // 13. Yük Durumu - Statik Yük Atamaları
   lines.push('TABLE:  "CASE - STATIC 1 - LOAD ASSIGNMENTS"');
-  lines.push('   Case=DEAD   LoadType="Load pattern"   LoadName=DEAD   LoadSF=1');
-  lines.push('   Case=SOIL_VERT   LoadType="Load pattern"   LoadName=SOIL_VERT   LoadSF=1');
-  lines.push('   Case=SOIL_LAT   LoadType="Load pattern"   LoadName=SOIL_LAT   LoadSF=1');
-  lines.push('   Case=UIC71_VERT   LoadType="Load pattern"   LoadName=UIC71_VERT   LoadSF=1');
-  lines.push('   Case=UIC71_LAT   LoadType="Load pattern"   LoadName=UIC71_LAT   LoadSF=1');
+  for (const pat of loadPatterns) {
+    lines.push(`   Case=${pat}   LoadType="Load pattern"   LoadName=${pat}   LoadSF=1`);
+  }
   lines.push('');
 
-  // 14. Kabuk Yüzey Yükleri (SAP2000 kolonu: UnifLoad, Dir=Gravity veya Dir=X)
+  // 14. Kabuk Yüzey Yükleri
   lines.push('TABLE:  "AREA LOADS - UNIFORM"');
   for (const l of loads) {
     lines.push(
@@ -472,7 +524,7 @@ function generateS2KScriptContent(
   }
   lines.push('');
 
-  // 15. Yük Kombinasyonları (Tüm ULS ve SLS Kombinasyonları ve ULS Zarfı)
+  // 15. Yük Kombinasyonları
   lines.push('TABLE:  "COMBINATION DEFINITIONS"');
   for (const combo of combinations) {
     if (combo.type === 'Linear Add') {
